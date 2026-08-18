@@ -163,6 +163,7 @@ CREATE TABLE `fp_pay_order` (
     `expire_time` DATETIME DEFAULT NULL COMMENT '过期时间（订单超过此时间未支付将自动关闭）',
     `client_ip` VARCHAR(50) DEFAULT NULL COMMENT '客户端IP地址（发起支付请求的客户端IP）',
     `ext_param` TEXT COMMENT '扩展参数（JSON格式，用于存储额外信息）',
+    `order_source` VARCHAR(20) NOT NULL DEFAULT 'native' COMMENT '订单来源：native-原生FastPay接口，epay-彩虹易支付协议接口；回调时按来源发对应格式',
     `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),

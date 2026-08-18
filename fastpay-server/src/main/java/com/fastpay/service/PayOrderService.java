@@ -3,6 +3,7 @@ package com.fastpay.service;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.fastpay.dto.CreateOrderDTO;
+import com.fastpay.dto.EpayCreateOrderDTO;
 import com.fastpay.entity.PayOrder;
 import com.fastpay.vo.PayResultVO;
 
@@ -21,6 +22,18 @@ public interface PayOrderService extends IService<PayOrder> {
      * @return 支付结果
      */
     PayResultVO createOrder(CreateOrderDTO dto, String clientIp);
+
+    /**
+     * 通过彩虹易支付协议入口创建订单。
+     * 上游控制器已经完成商户查找和易支付签名校验，服务层跳过 sign 校验，
+     * 使用请求携带的 notify_url / return_url（不用商户默认值），
+     * order_source 固定为 {@link com.fastpay.common.Constants.OrderSource#EPAY}。
+     *
+     * @param dto      易支付协议入参
+     * @param clientIp 客户端IP
+     * @return 平台订单号 + 支付页/二维码地址
+     */
+    PayResultVO createEpayOrder(EpayCreateOrderDTO dto, String clientIp);
 
     /**
      * 查询订单状态

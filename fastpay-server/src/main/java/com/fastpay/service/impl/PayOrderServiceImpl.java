@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fastpay.common.BusinessException;
 import com.fastpay.common.Constants;
 import com.fastpay.dto.CreateOrderDTO;
+import com.fastpay.dto.EpayCreateOrderDTO;
 import com.fastpay.entity.Merchant;
 import com.fastpay.entity.PayOrder;
 import com.fastpay.entity.PayQrcode;
@@ -17,6 +18,7 @@ import com.fastpay.mapper.PayQrcodeMapper;
 import com.fastpay.mapper.ShopMapper;
 import com.fastpay.service.PayOrderService;
 import com.fastpay.service.PayQrcodeService;
+import com.fastpay.util.EpaySignUtil;
 import com.fastpay.util.SignUtil;
 import com.fastpay.vo.PayResultVO;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +28,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.TreeMap;
@@ -140,6 +144,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         order.setExpireTime(LocalDateTime.now().plusMinutes(orderTimeoutMinutes));
         order.setClientIp(clientIp);
         order.setExtParam(dto.getExtParam());
+        order.setOrderSource(Constants.OrderSource.NATIVE);
 
         this.save(order);
         log.info("创建支付订单成功: orderNo={}, amount={}", order.getOrderNo(), order.getAmount());
@@ -161,6 +166,75 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             vo.setPayPageUrl(pageDomain + "/pay/" + order.getOrderNo());
         }
 
+        return vo;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PayResultVO createEpayOrder(EpayCreateOrderDTO dto, String clientIp) {
+        // 商户已在控制器里查过存在且启用，这里再取一次拿到 id 等字段。做重复校验是防御，成本极低
+        Merchant merchant = merchantMapper.selectOne(new LambdaQueryWrapper<Merchant>()
+                .eq(Merchant::getMerchantNo, dto.getMerchantNo()));
+        if (merchant == null) {
+            throw new BusinessException("商户不存在");
+        }
+        if (!Constants.Status.ENABLED.equals(merchant.getStatus())) {
+            throw new BusinessException("商户已被禁用");
+        }
+
+        // 订单号去重
+        Long existCount = this.count(new LambdaQueryWrapper<PayOrder>()
+                .eq(PayOrder::getMerchantId, merchant.getId())
+                .eq(PayOrder::getOutTradeNo, dto.getOutTradeNo()));
+        if (existCount > 0) {
+            throw new BusinessException("商户订单号已存在");
+        }
+
+        // 易支付协议不带 shopNo，跨店铺挑一张可用的二维码
+        PayQrcode qrcode = payQrcodeService.getAvailableQrcodeAnyShop(merchant.getId(), dto.getPayType());
+        if (qrcode == null) {
+            throw new BusinessException("暂无可用的收款通道，请联系商户");
+        }
+
+        Shop shop = shopMapper.selectById(qrcode.getShopId());
+
+        PayOrder order = new PayOrder();
+        order.setOrderNo(SignUtil.generateOrderNo());
+        order.setOutTradeNo(dto.getOutTradeNo());
+        order.setMerchantId(merchant.getId());
+        order.setShopId(qrcode.getShopId());
+        if (shop != null) {
+            order.setShopName(shop.getShopName());
+            order.setShopNo(shop.getShopNo());
+        }
+        order.setQrcodeId(qrcode.getId());
+        order.setPayType(qrcode.getPayType());
+        // 易支付协议下 sub2api 会自己跳转到 payurl，走的是页面模式
+        order.setPayMethod(Constants.PayMethod.PAGE);
+        order.setAmount(dto.getAmount());
+        order.setSubject(dto.getSubject());
+        order.setStatus(Constants.OrderStatus.UNPAID);
+        // 关键差异：用请求带来的 notify_url / return_url，不用商户默认值
+        order.setNotifyUrl(StringUtils.hasText(dto.getNotifyUrl()) ? dto.getNotifyUrl() : merchant.getNotifyUrl());
+        order.setReturnUrl(StringUtils.hasText(dto.getReturnUrl()) ? dto.getReturnUrl() : merchant.getReturnUrl());
+        order.setNotifyStatus(0);
+        order.setNotifyCount(0);
+        order.setExpireTime(LocalDateTime.now().plusMinutes(orderTimeoutMinutes));
+        order.setClientIp(clientIp);
+        order.setOrderSource(Constants.OrderSource.EPAY);
+
+        this.save(order);
+        log.info("创建易支付订单成功: orderNo={}, amount={}, source=epay", order.getOrderNo(), order.getAmount());
+
+        PayResultVO vo = new PayResultVO();
+        vo.setOrderNo(order.getOrderNo());
+        vo.setOutTradeNo(order.getOutTradeNo());
+        vo.setAmount(order.getAmount());
+        vo.setPayType(order.getPayType());
+        vo.setPayMethod(order.getPayMethod());
+        vo.setExpireTime(order.getExpireTime().atZone(java.time.ZoneId.systemDefault()).toEpochSecond());
+        vo.setQrcodeUrl(qrcode.getQrcodeUrl());
+        vo.setPayPageUrl(pageDomain + "/pay/" + order.getOrderNo());
         return vo;
     }
 
@@ -353,6 +427,9 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
 
     /**
      * 实际执行发送回调通知的方法
+     * 按 order.orderSource 分派：
+     * - epay：GET 请求 + 易支付签名（{@link EpaySignUtil}）
+     * - native / null（存量老订单）：POST 请求 + FastPay 签名（{@link SignUtil}），保持完全兼容
      */
     private void doSendNotify(PayOrder order) {
         long startTime = System.currentTimeMillis();
@@ -366,7 +443,36 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             return;
         }
 
-        // 构建回调参数
+        try {
+            String response;
+            if (Constants.OrderSource.EPAY.equals(order.getOrderSource())) {
+                response = sendEpayNotify(order, merchant);
+            } else {
+                response = sendNativeNotify(order, merchant);
+            }
+
+            log.info("发送回调通知成功: orderNo={}, source={}, response={}, 耗时{}ms",
+                    order.getOrderNo(), order.getOrderSource(), response, System.currentTimeMillis() - startTime);
+
+            order.setNotifyStatus("success".equalsIgnoreCase(response) ? 1 : 2);
+            order.setNotifyCount(order.getNotifyCount() + 1);
+            order.setLastNotifyTime(LocalDateTime.now());
+            this.updateById(order);
+
+        } catch (Exception e) {
+            log.error("发送回调通知失败: orderNo={}, source={}, error={}, 耗时{}ms",
+                    order.getOrderNo(), order.getOrderSource(), e.getMessage(), System.currentTimeMillis() - startTime);
+            order.setNotifyStatus(2);
+            order.setNotifyCount(order.getNotifyCount() + 1);
+            order.setLastNotifyTime(LocalDateTime.now());
+            this.updateById(order);
+        }
+    }
+
+    /**
+     * 原生 FastPay 格式的回调：POST 表单 + 大写 MD5 签名，行为和历史版本完全一致
+     */
+    private String sendNativeNotify(PayOrder order, Merchant merchant) {
         TreeMap<String, Object> params = new TreeMap<>();
         params.put("merchantNo", merchant.getMerchantNo());
         params.put("orderNo", order.getOrderNo());
@@ -375,36 +481,47 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         params.put("payAmount", order.getPayAmount());
         params.put("payType", order.getPayType());
         params.put("status", String.valueOf(order.getStatus()));
-        params.put("payTime", order.getPayTime()!=null?order.getPayTime().toString():"");
+        params.put("payTime", order.getPayTime() != null ? order.getPayTime().toString() : "");
         params.put("timestamp", String.valueOf(System.currentTimeMillis() / 1000));
         if (StringUtils.hasText(order.getExtParam())) {
             params.put("extParam", order.getExtParam());
         }
-
-        // 生成签名
         String sign = SignUtil.generateSign(params, merchant.getApiSecret());
         params.put("sign", sign);
+        return HttpUtil.post(order.getNotifyUrl(), params, 5000);
+    }
 
-        try {
-            // 发送回调，超时时间从10秒减少到5秒，提高响应速度
-            String response = HttpUtil.post(order.getNotifyUrl(), params, 5000);
-            log.info("发送回调通知成功: orderNo={}, response={}, 耗时{}ms",
-                    order.getOrderNo(), response, System.currentTimeMillis() - startTime);
+    /**
+     * 彩虹易支付格式的回调：GET 查询串 + 小写 MD5 签名
+     */
+    private String sendEpayNotify(PayOrder order, Merchant merchant) {
+        TreeMap<String, String> params = new TreeMap<>();
+        params.put("pid", merchant.getMerchantNo());
+        params.put("trade_no", order.getOrderNo());
+        params.put("out_trade_no", order.getOutTradeNo());
+        params.put("type", order.getPayType());
+        params.put("name", order.getSubject() == null ? "" : order.getSubject());
+        params.put("money", order.getPayAmount() != null
+                ? order.getPayAmount().toPlainString()
+                : order.getAmount().toPlainString());
+        params.put("trade_status", "TRADE_SUCCESS");
 
-            // 更新通知状态
-            order.setNotifyStatus("success".equalsIgnoreCase(response) ? 1 : 2);
-            order.setNotifyCount(order.getNotifyCount() + 1);
-            order.setLastNotifyTime(LocalDateTime.now());
-            this.updateById(order);
+        String sign = EpaySignUtil.generateSign(params, merchant.getApiSecret());
+        params.put("sign", sign);
+        params.put("sign_type", "MD5");
 
-        } catch (Exception e) {
-            log.error("发送回调通知失败: orderNo={}, error={}, 耗时{}ms",
-                    order.getOrderNo(), e.getMessage(), System.currentTimeMillis() - startTime);
-            order.setNotifyStatus(2);
-            order.setNotifyCount(order.getNotifyCount() + 1);
-            order.setLastNotifyTime(LocalDateTime.now());
-            this.updateById(order);
+        StringBuilder url = new StringBuilder(order.getNotifyUrl());
+        url.append(order.getNotifyUrl().contains("?") ? '&' : '?');
+        boolean first = true;
+        for (java.util.Map.Entry<String, String> e : params.entrySet()) {
+            if (!first) {
+                url.append('&');
+            }
+            first = false;
+            url.append(e.getKey()).append('=')
+                    .append(URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
         }
+        return HttpUtil.get(url.toString(), 5000);
     }
 
     @Override
