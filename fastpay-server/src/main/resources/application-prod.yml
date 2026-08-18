@@ -45,13 +45,17 @@ mybatis-plus:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
 # Knife4j API 文档配置
+# 生产环境默认关闭：接口本身有登录保护，但把 67 个接口的完整清单公开出去，
+# 等于把系统地图直接送给攻击者。要临时排查时用环境变量 SPRINGDOC_API_DOCS_ENABLED=true 打开。
 springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:false}
+    path: /v3/api-docs
   swagger-ui:
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:false}
     path: /swagger-ui.html
     tags-sorter: alpha
     operations-sorter: alpha
-  api-docs:
-    path: /v3/api-docs
   group-configs:
     - group: 'default'
       paths-to-match: '/**'
@@ -66,7 +70,11 @@ knife4j:
 fastpay:
   # JWT 配置
   jwt:
-    secret: FastPaySecretKey2024ForJwtTokenGeneration
+    # 登录令牌的签名密钥，由环境变量 FASTPAY_JWT_SECRET 注入。
+    # 和上面数据库那几项一样故意不设默认值：仓库是公开的，留一个默认值就等于没有安全性，
+    # 而且忘配的时候会静默退回那个公开值，比直接启动失败危险得多。
+    # 生成方式：openssl rand -hex 48
+    secret: ${FASTPAY_JWT_SECRET}
     # Token 有效期（小时）
     expire-hours: 12
   

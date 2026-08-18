@@ -12,7 +12,7 @@
 | 服务器 | `150.158.99.251`（OpenCloudOS 9.4） |
 | 后端进程 | systemd 服务 `fastpay-server`，监听 `127.0.0.1:7001`（不对外） |
 | 程序目录 | `/opt/fastpay/` |
-| 前端文件 | `/opt/fastpay/www/fastpay-admin/`、`/opt/fastpay/www/fastpay-merchant/` |
+| 前端文件 | `/opt/fastpay/www/fastpay-admin/`、`/opt/fastpay/www/fastpay-merchant/`（目录 755、文件 644，**不能全局可写**） |
 | 日志 | `/opt/fastpay/logs/fastpay-server.log` |
 | 敏感配置 | `/etc/fastpay/fastpay-server.env`（权限 640，只有 root 和 fastpay 账号能读） |
 | nginx 配置 | `/etc/nginx/conf.d/pay.copliot.conf`（**只有这一个文件属于本项目**） |
@@ -78,6 +78,8 @@ DB_PASSWORD=<密码>
 FASTPAY_JWT_SECRET=<一串足够长的随机字符串，用 openssl rand -hex 48 生成>
 FASTPAY_PAGE_DOMAIN=https://pay.copliot.cloud/fastpay-merchant
 FASTPAY_NOTIFY_CALLBACK_URL=https://pay.copliot.cloud/fastpay-server/api/notify/callback
+SPRINGDOC_API_DOCS_ENABLED=false
+SPRINGDOC_SWAGGER_UI_ENABLED=false
 ```
 
 权限必须是 `640 root:fastpay`：
@@ -89,10 +91,11 @@ chmod 640 /etc/fastpay/fastpay-server.env
 
 **这个文件绝对不能提交进仓库。**
 
-### 两个容易踩的坑
+### 三个容易踩的坑
 
 1. **`bootstrap.yml` 不生效。** 本项目没有引入 spring-cloud，Spring Boot 3 根本不读 `bootstrap.yml`。改那里面的 `active: prod` 没有任何作用。真正决定用哪套配置的是环境变量 `SPRING_PROFILES_ACTIVE`。
-2. **`FASTPAY_JWT_SECRET` 丢了不会报错，但会退回仓库里那个公开的默认密钥。** 换服务器或重建这个文件时，一定记得把它带上。
+2. **`DB_URL` / `DB_USERNAME` / `DB_PASSWORD` / `FASTPAY_JWT_SECRET` 这四个没有默认值，漏配就直接启动失败。** 这是故意的 —— 比连错库、或者悄悄用一个公开的弱密钥要安全得多。换服务器、重建这个文件时四个都要带上。
+3. **接口文档默认关闭。** `application-prod.yml` 里 `springdoc.api-docs.enabled` 默认 `false`，nginx 里也挡了一层。要临时排查接口时把 `SPRINGDOC_API_DOCS_ENABLED=true` 打开并重启，**用完记得关回去**（还要把 nginx 里那条 `return 404` 一并临时注释掉才看得到）。
 
 ## 三、部署 / 更新版本
 
@@ -114,6 +117,9 @@ ssh root@150.158.99.251 '
   tar -xzf merchant.tar.gz -C www/fastpay-merchant
   rm -f admin.tar.gz merchant.tar.gz
   chown -R fastpay:fastpay /opt/fastpay
+  # ⚠️ 这两行不能省，原因见下
+  chmod -R go-w /opt/fastpay/www
+  chmod 755 /opt/fastpay/www/fastpay-admin /opt/fastpay/www/fastpay-merchant
 '
 
 # 3. 重启后端
@@ -125,6 +131,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 ```
 
 前端是纯静态文件，替换完立刻生效，不用重启 nginx。
+
+> ⚠️ **上面那两行 `chmod` 每次更新都要跑，不是一次性的。**
+> 在 Windows 上打的 `tar` 包不带 Unix 权限位，解压到 Linux 上会变成 `777` / `666` —— 也就是**这台机器上任何账号都能改支付页和登录页**。改掉之后页面看起来一模一样，但商户输入的账号密码会被送到别人手里，非常难发现。
+> 页面目录 `755`、文件 `644` 就够了（nginx 只需要读）。改完可以用 `find /opt/fastpay -perm /o+w | wc -l` 确认结果是 `0`。
 
 **升级前先留一份能退回去的东西**：
 
@@ -196,6 +206,27 @@ nginx -t && systemctl reload nginx
   —— 前端是单页应用，没有这行的话用户在内页按 F5 会 404。
 - `client_max_body_size 20m;`
   —— 收款二维码是以 base64 存的，请求体比较大。
+- 挡接口文档那条 `return 404;`
+  —— 后端配置里已经关了一层，这是第二层保险。
+
+### ⚠️ 换到新服务器时必看：`$connection_upgrade` 不是 nginx 内置变量
+
+上面 WebSocket 那行用到的 `$connection_upgrade`，定义在 `/etc/nginx/nginx.conf` 的 `http` 块里，**不在本项目的配置文件里**：
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+```
+
+当前这台服务器上有这段（原来就有），所以直接用没问题。但**如果照本文档在一台新机器上部署，新机器的 nginx.conf 里通常没有这段**，`nginx -t` 会直接报：
+
+```
+nginx: [emerg] unknown "connection_upgrade" variable
+```
+
+解决办法：先把上面那段 `map` 加进新机器的 `/etc/nginx/nginx.conf` 的 `http {}` 块，再放本项目的配置文件。
 
 ## 六、证书
 
@@ -206,7 +237,16 @@ nginx -t && systemctl reload nginx
 
 这张证书是几个站点共用的，续期由服务器上原有的机制负责，本项目不单独管。续期后记得 `systemctl reload nginx`。
 
-## 七、已知坑（改代码前先看这里）
+## 七、已知行为（看起来像坏了，其实是设计如此）
+
+1. **管理员在后台点「确认支付」，用户那边的支付页不会自动跳转。**
+   支付页的自动跳转只由**真实的到账通知**（监听软件回调 `/fastpay-server/api/notify/callback`）触发，后台的人工确认走的是另一条路，不发这条推送。
+   所以**不要用「后台手动确认」去测自动跳转功能** —— 那样测出来永远是"不跳"，会误判成故障。要验这个功能，得模拟一次真实的到账回调。
+
+2. **支付页上的倒计时走完（默认 3 分钟），订单会被自动关掉。**
+   有个定时任务在扫超时订单。测试时如果隔太久再去看订单，状态会变成已关闭，这是正常的。
+
+## 八、已知坑（改代码前先看这里）
 
 1. **`fastpay-server/pom.xml` 里的 `commons-lang3` 不能写 `<scope>test</scope>`。**
    springdoc 在运行时要用 `org.apache.commons.lang3.StringUtils`。如果把 commons-lang3 声明成 test 作用域，Maven 的就近原则会把 springdoc 传递进来的那份 compile 依赖一起降级成 test，打出来的可执行 jar 里就没有这个包，服务一启动就 `ClassNotFoundException`。
@@ -215,5 +255,8 @@ nginx -t && systemctl reload nginx
 2. **`fastpay-merchant` 依赖 `less`。**
    支付页和支付结果页用了 `lang="less"` 的样式，`package.json` 里必须保留 `less` 这个 devDependency，否则 `npm run build` 直接失败。
 
-3. **仓库里的 JWT 密钥和默认管理员密码是公开的。**
-   `application-prod.yml` 里 `fastpay.jwt.secret` 的默认值、以及数据库里初始的 `admin / 123456`，在公开仓库里都能看到。生产环境必须用环境变量覆盖密钥，并且第一时间改掉管理员密码。
+3. **默认管理员账号 `admin / 123456` 写在公开仓库的建表脚本里。**
+   任何人都能查到。**新环境部署完第一件事就是登录后台改掉这个密码**，别等接第一个真实商户。
+   （`application-prod.yml` 里的 JWT 密钥已经改成必须由环境变量注入、没有默认值，这条不再是风险；`application-dev.yml` 里那个开发用的默认密钥仍然是公开的，本地开发无所谓，但**不要拿 dev 配置上生产**。）
+
+4. **前端目录权限每次更新都要重新收紧。** 见上面「三、部署 / 更新版本」里的说明 —— Windows 打的 tar 包解压到 Linux 会变成全局可写。
