@@ -10,17 +10,18 @@ spring:
     name: fastpay-server
   
   # 数据库配置
-  # 默认连 MySQL（保持原来的账号密码不变）；要切到 PostgreSQL，设置下面几个环境变量即可，不用改代码：
-  #   DB_DRIVER=org.postgresql.Driver
-  #   DB_URL=jdbc:postgresql://localhost:5432/bigbear_fastpay
-  #   DB_USERNAME=postgres
-  #   DB_PASSWORD=你的密码
-  # 注：这里的明文密码是历史遗留问题，本次 PG 改造不处理，仅补充环境变量覆盖能力
+  # 生产环境的数据库地址和账号密码一律由环境变量注入，仓库里不保留任何真实连接信息。
+  # 部署时在 systemd 的 EnvironmentFile（/etc/fastpay/fastpay-server.env，权限 600）里配置：
+  #   DB_DRIVER=org.postgresql.Driver     # 默认就是它，连 MySQL 时才需要改
+  #   DB_URL=jdbc:postgresql://<主机>:5432/<库名>
+  #   DB_USERNAME=<用户名>
+  #   DB_PASSWORD=<密码>
+  # DB_URL / DB_USERNAME / DB_PASSWORD 故意不设默认值：没配就启动失败，避免连错库或用默认密码上线。
   datasource:
-    driver-class-name: ${DB_DRIVER:com.mysql.cj.jdbc.Driver}
-    url: ${DB_URL:jdbc:mysql://localhost:3306/bigbear_fastpay?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
-    username: ${DB_USERNAME:root}
-    password: ${DB_PASSWORD:QAZ330600}
+    driver-class-name: ${DB_DRIVER:org.postgresql.Driver}
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
   
   # Jackson 配置
   jackson:
@@ -44,20 +45,24 @@ mybatis-plus:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
 # Knife4j API 文档配置
+# 生产环境默认关闭：接口本身有登录保护，但把 67 个接口的完整清单公开出去，
+# 等于把系统地图直接送给攻击者。要临时排查时用环境变量 SPRINGDOC_API_DOCS_ENABLED=true 打开。
 springdoc:
+  api-docs:
+    enabled: ${SPRINGDOC_API_DOCS_ENABLED:false}
+    path: /v3/api-docs
   swagger-ui:
+    enabled: ${SPRINGDOC_SWAGGER_UI_ENABLED:false}
     path: /swagger-ui.html
     tags-sorter: alpha
     operations-sorter: alpha
-  api-docs:
-    path: /v3/api-docs
   group-configs:
     - group: 'default'
       paths-to-match: '/**'
       packages-to-scan: com.fastpay.controller
 
 knife4j:
-  enable: true
+  enable: false
   setting:
     language: zh_cn
 
@@ -65,7 +70,11 @@ knife4j:
 fastpay:
   # JWT 配置
   jwt:
-    secret: FastPaySecretKey2024ForJwtTokenGeneration
+    # 登录令牌的签名密钥，由环境变量 FASTPAY_JWT_SECRET 注入。
+    # 和上面数据库那几项一样故意不设默认值：仓库是公开的，留一个默认值就等于没有安全性，
+    # 而且忘配的时候会静默退回那个公开值，比直接启动失败危险得多。
+    # 生成方式：openssl rand -hex 48
+    secret: ${FASTPAY_JWT_SECRET}
     # Token 有效期（小时）
     expire-hours: 12
   
@@ -79,9 +88,9 @@ fastpay:
     # 订单超时时间（分钟）
     order-timeout-minutes: 3
     # 支付页面域名（商户前端地址）
-    page-domain: http://121.4.28.146/fastpay-merchant
+    page-domain: ${FASTPAY_PAGE_DOMAIN:https://pay.copliot.cloud/fastpay-merchant}
   
   # 监听软件回调配置
   notify:
     # 监听软件回调地址（完整URL，用于模版展示）
-    callback-url: http://121.4.28.146/fastpay-server/api/notify/callback
+    callback-url: ${FASTPAY_NOTIFY_CALLBACK_URL:https://pay.copliot.cloud/fastpay-server/api/notify/callback}

@@ -1,0 +1,28 @@
+[Unit]
+Description=FastPay Server (bigbear-fastpay) - pay.copliot.cloud
+Documentation=https://github.com/xiaomo37564459/bigbear-fastpay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fastpay
+Group=fastpay
+WorkingDirectory=/opt/fastpay
+EnvironmentFile=/etc/fastpay/fastpay-server.env
+ExecStart=/opt/dragonwell17/bin/java -Xms256m -Xmx768m -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai -jar /opt/fastpay/fastpay-server-1.0.0.jar
+SuccessExitStatus=143
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+
+StandardOutput=append:/opt/fastpay/logs/fastpay-server.log
+StandardError=append:/opt/fastpay/logs/fastpay-server.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
