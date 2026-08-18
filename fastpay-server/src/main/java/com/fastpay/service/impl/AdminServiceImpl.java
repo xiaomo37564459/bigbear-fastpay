@@ -19,6 +19,8 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 管理员服务实现类
@@ -141,7 +143,15 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
         vo.setAlipayAmount(alipayAmount);
 
         // 最近7天统计
-        vo.setRecentStats(payOrderMapper.statsByDate(7));
+        // Mapper 里 SQL 别名用的是 stat_date（避开 PG 的 date 关键字），这里映射回 date，
+        // 保证接口返回给前端的字段名不变
+        List<Map<String, Object>> recentStats = payOrderMapper.statsByDate(7);
+        recentStats.forEach(stat -> {
+            if (stat.containsKey("stat_date")) {
+                stat.put("date", stat.remove("stat_date"));
+            }
+        });
+        vo.setRecentStats(recentStats);
 
         return vo;
     }

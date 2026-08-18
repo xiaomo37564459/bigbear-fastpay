@@ -23,3 +23,6 @@ rebel.xml
 .springBeans
 node_modules
 dist
+
+# 数据库连接信息，不能进仓库
+PG.txt
