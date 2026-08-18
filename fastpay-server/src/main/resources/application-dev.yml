@@ -10,11 +10,16 @@ spring:
     name: fastpay-server
   
   # 数据库配置
+  # 默认连 MySQL；要切到 PostgreSQL，设置下面几个环境变量即可，不用改代码：
+  #   DB_DRIVER=org.postgresql.Driver
+  #   DB_URL=jdbc:postgresql://localhost:5432/bigbear_fastpay
+  #   DB_USERNAME=postgres
+  #   DB_PASSWORD=你的密码
   datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/bigbear_fastpay?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username:
-    password:
+    driver-class-name: ${DB_DRIVER:com.mysql.cj.jdbc.Driver}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/bigbear_fastpay?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
   
   # Jackson 配置
   jackson:

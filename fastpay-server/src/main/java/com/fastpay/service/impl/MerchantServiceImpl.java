@@ -223,15 +223,16 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
                 .eq(PayOrder::getMerchantId, merchantId);
 
         // 今日统计
+        // CAST(...AS DATE) = CURRENT_DATE 是 MySQL 和 PostgreSQL 都认的写法，不用按数据库分两套
         LambdaQueryWrapper<PayOrder> todayQuery = new LambdaQueryWrapper<PayOrder>()
                 .eq(PayOrder::getMerchantId, merchantId)
-                .apply("DATE(create_time) = CURDATE()");
+                .apply("CAST(create_time AS DATE) = CURRENT_DATE");
         vo.setTodayOrderCount(Math.toIntExact(payOrderMapper.selectCount(todayQuery)));
 
         LambdaQueryWrapper<PayOrder> todaySuccessQuery = new LambdaQueryWrapper<PayOrder>()
                 .eq(PayOrder::getMerchantId, merchantId)
                 .eq(PayOrder::getStatus, Constants.OrderStatus.PAID)
-                .apply("DATE(create_time) = CURDATE()");
+                .apply("CAST(create_time AS DATE) = CURRENT_DATE");
         vo.setTodaySuccessCount(Math.toIntExact(payOrderMapper.selectCount(todaySuccessQuery)));
 
         // 今日金额

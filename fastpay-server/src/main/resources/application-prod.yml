@@ -10,11 +10,17 @@ spring:
     name: fastpay-server
   
   # 数据库配置
+  # 默认连 MySQL（保持原来的账号密码不变）；要切到 PostgreSQL，设置下面几个环境变量即可，不用改代码：
+  #   DB_DRIVER=org.postgresql.Driver
+  #   DB_URL=jdbc:postgresql://localhost:5432/bigbear_fastpay
+  #   DB_USERNAME=postgres
+  #   DB_PASSWORD=你的密码
+  # 注：这里的明文密码是历史遗留问题，本次 PG 改造不处理，仅补充环境变量覆盖能力
   datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/bigbear_fastpay?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: root
-    password: QAZ330600
+    driver-class-name: ${DB_DRIVER:com.mysql.cj.jdbc.Driver}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/bigbear_fastpay?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:QAZ330600}
   
   # Jackson 配置
   jackson:
