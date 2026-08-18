@@ -141,14 +141,17 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- embedded-postgres 传递依赖的 commons-compress 需要比项目里其它依赖带进来的更新的
-             commons-lang3（要用到 SystemProperties.getUserName(String) 这个方法），这里显式声明
-             新版本把它压过去 -->
+        <!-- commons-lang3：springdoc/knife4j 运行时要用（SpringdocBeanFactoryConfigurer 会加载
+             org.apache.commons.lang3.StringUtils），embedded-postgres 传递依赖的 commons-compress
+             又要求更新的版本（用到 SystemProperties.getUserName(String)），所以这里显式声明 3.18.0
+             统一版本。
+             注意：这里千万不能写 <scope>test</scope> —— Maven 的就近原则会把 springdoc 传进来的
+             compile 依赖一起降级成 test，打出来的可执行 jar 里就没有这个包了，服务启动直接
+             ClassNotFoundException: org.apache.commons.lang3.StringUtils。 -->
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
             <version>3.18.0</version>
-            <scope>test</scope>
         </dependency>
     </dependencies>
     

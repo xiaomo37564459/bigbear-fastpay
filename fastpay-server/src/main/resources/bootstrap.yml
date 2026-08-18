@@ -1,5 +1,9 @@
+# 注意：本项目没有引入 spring-cloud-context，Spring Boot 3 不会读取本文件。
+# 真正决定用哪套配置的是启动时的环境变量 SPRING_PROFILES_ACTIVE（生产环境写在
+# /etc/fastpay/fastpay-server.env 里），或者命令行参数 --spring.profiles.active=xxx。
+# 本文件保留仅作说明，改这里不会生效。
 spring:
   application:
     name: fastpay-server
   profiles:
-    active: dev
+    active: prod
