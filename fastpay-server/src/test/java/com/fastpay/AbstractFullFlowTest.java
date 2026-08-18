@@ -345,6 +345,25 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
+    @Order(12)
+    void step12b_epayApiRefundReturnsExplicitUnsupported() throws Exception {
+        // sub2api 二进制里硬编码了 /api.php?act=refund。本期不做退款，
+        // 但必须给一个"明确不支持"的响应，不能 404 / 500 让对方误以为网络异常
+        MvcResult get = mockMvc.perform(get("/api.php").param("act", "refund")).andReturn();
+        JsonNode getResp = objectMapper.readTree(get.getResponse().getContentAsByteArray());
+        assertThat(get.getResponse().getStatus()).isEqualTo(200);
+        assertThat(getResp.get("code").asInt()).isEqualTo(-1);
+        assertThat(getResp.get("msg").asText()).contains("退款");
+
+        // sub2api 可能用 POST（strings 里没标方法，两个方法都要接得住）
+        MvcResult post = mockMvc.perform(post("/api.php").param("act", "refund")).andReturn();
+        JsonNode postResp = objectMapper.readTree(post.getResponse().getContentAsByteArray());
+        assertThat(post.getResponse().getStatus()).isEqualTo(200);
+        assertThat(postResp.get("code").asInt()).isEqualTo(-1);
+        assertThat(postResp.get("msg").asText()).contains("退款");
+    }
+
+    @Test
     @Order(13)
     void step13_epaySourceOrderCallbackIsGetWithEpayFormat() throws Exception {
         // 起一个本地 HTTP 服务捕获真实回调，验证：

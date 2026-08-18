@@ -15,7 +15,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -114,15 +113,28 @@ public class EpayGatewayController {
     /**
      * 查询订单状态。sub2api 有时候会用来兜底轮询
      * 彩虹易支付协议约定：code=1 且 status=1 表示已支付
+     *
+     * sub2api 二进制里还硬编码了 /api.php?act=refund，虽然本期不做退款，
+     * 遇到该 act 也要给一个明确的"不支持退款"响应，不能是 404/500，
+     * 免得对方以为是网络异常反复重试
      */
-    @Operation(summary = "易支付-订单查询", description = "彩虹易支付通用协议 /api.php?act=order 入口")
-    @GetMapping("/api.php")
+    @Operation(summary = "易支付-订单查询/退款兜底", description = "彩虹易支付通用协议 /api.php 入口；本期只处理 act=order，act=refund 返回明确不支持")
+    @RequestMapping(value = "/api.php", method = {org.springframework.web.bind.annotation.RequestMethod.GET,
+            org.springframework.web.bind.annotation.RequestMethod.POST})
     @ResponseBody
     public Map<String, Object> api(HttpServletRequest request) {
         Map<String, String> params = collectParams(request);
         String act = params.get("act");
         Map<String, Object> resp = new LinkedHashMap<>();
 
+        if ("refund".equals(act)) {
+            // 本期不做退款：sub2api 后台把 refund_enabled 关掉就不会调这里，
+            // 但如果对方版本忽略配置照发不误，也要给一个明确的失败原因
+            log.info("易支付 /api.php?act=refund 请求被拒绝：本期不支持退款");
+            resp.put("code", -1);
+            resp.put("msg", "本期未实现退款，请在 sub2api 后台关闭 refund_enabled，或联系商户手动处理");
+            return resp;
+        }
         if (!"order".equals(act)) {
             resp.put("code", -1);
             resp.put("msg", "不支持的 act：" + act);

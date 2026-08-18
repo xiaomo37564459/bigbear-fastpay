@@ -614,7 +614,10 @@ $sign = strtoupper(md5($signStr));
 |---|---|---|
 | `/fastpay-server/submit.php` | GET / POST | 用户扫码前的**页面跳转**入口，会自动 302 到平台支付页 |
 | `/fastpay-server/mapi.php` | POST | 对方系统**后端**下单入口，返回 JSON 里带 `payurl` 和 `qrcode` |
-| `/fastpay-server/api.php?act=order` | GET | 订单**查询**入口（对方系统兜底轮询用） |
+| `/fastpay-server/api.php?act=order` | GET / POST | 订单**查询**入口（对方系统兜底轮询用） |
+| `/fastpay-server/api.php?act=refund` | GET / POST | 退款入口的**兜底占位**：本期不做退款，会明确返回 `{code:-1, msg:"本期未实现退款..."}` |
+
+> ⚠️ **本期不支持退款**：请在 sub2api 后台把 `refund_enabled` / `allow_user_refund` 关掉，用户端就不会出现退款入口，`refund` 也不会被调用。上面那个兜底只是防对方版本忽略配置照发。
 
 ### 支付类型（type）
 
