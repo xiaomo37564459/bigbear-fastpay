@@ -75,6 +75,16 @@ public class Constants {
     }
 
     /**
+     * 订单来源，决定回调格式
+     */
+    public static class OrderSource {
+        /** 原生 FastPay 接口（/api/pay/*）；回调用 POST + FastPay 签名 */
+        public static final String NATIVE = "native";
+        /** 彩虹易支付协议接口（/submit.php、/mapi.php）；回调用 GET + 易支付签名 */
+        public static final String EPAY = "epay";
+    }
+
+    /**
      * Token 前缀
      */
     public static class TokenPrefix {

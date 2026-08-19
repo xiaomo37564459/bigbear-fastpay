@@ -77,4 +77,14 @@ public interface PayQrcodeService extends IService<PayQrcode> {
      * @return 可用的二维码
      */
     PayQrcode getAvailableQrcode(Long merchantId, String shopNo, String payType);
+
+    /**
+     * 无店铺归属地按支付类型选一张可用二维码（用于易支付协议入站请求，
+     * 对接方一般只带 pid+type，不带店铺信息）
+     *
+     * @param merchantId 商户ID
+     * @param payType    支付类型（wxpay/alipay）
+     * @return 可用的二维码；无可用返回 null
+     */
+    PayQrcode getAvailableQrcodeAnyShop(Long merchantId, String payType);
 }

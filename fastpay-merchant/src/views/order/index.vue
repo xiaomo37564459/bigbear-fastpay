@@ -147,46 +147,11 @@
     </div>
 
     <!-- 订单详情弹窗 -->
-    <el-dialog v-model="showDetail" title="订单详情" width="650px">
-      <el-descriptions :column="2" border>
-        <el-descriptions-item label="平台订单号">{{ currentOrder.orderNo }}</el-descriptions-item>
-        <el-descriptions-item label="商户订单号">{{ currentOrder.outTradeNo }}</el-descriptions-item>
-        <el-descriptions-item label="所属店铺">{{ currentOrder.shopName || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="商品名称">{{ currentOrder.subject }}</el-descriptions-item>
-        <el-descriptions-item label="订单金额">
-          <span class="amount-text">¥{{ currentOrder.amount }}</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="实付金额">
-          <span class="amount-text">¥{{ currentOrder.payAmount || '-' }}</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="支付类型">
-          <el-tag :type="currentOrder.payType === 'wxpay' ? 'success' : 'primary'" size="small">
-            {{ currentOrder.payType === 'wxpay' ? '微信支付' : '支付宝' }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="订单状态">
-          <el-tag :type="getStatusType(currentOrder.status)" size="small">
-            {{ getStatusText(currentOrder.status) }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="回调状态">
-          <template v-if="currentOrder.status === 1">
-            <el-tag :type="getNotifyStatusType(currentOrder.notifyStatus)" size="small">
-              {{ getNotifyStatusText(currentOrder.notifyStatus) }}
-            </el-tag>
-            <span v-if="currentOrder.notifyCount > 0" class="notify-count">(已通知{{ currentOrder.notifyCount }}次)</span>
-          </template>
-          <span v-else>-</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="回调地址" :span="2">{{ currentOrder.notifyUrl || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="跳转地址" :span="2">{{ currentOrder.returnUrl || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ formatTime(currentOrder.createTime) }}</el-descriptions-item>
-        <el-descriptions-item label="支付时间">{{ formatTime(currentOrder.payTime) || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="过期时间">{{ formatTime(currentOrder.expireTime) }}</el-descriptions-item>
-        <el-descriptions-item label="最后通知时间">{{ formatTime(currentOrder.lastNotifyTime) || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="客户端IP">{{ currentOrder.clientIp || '-' }}</el-descriptions-item>
-      </el-descriptions>
-    </el-dialog>
+    <OrderDetailDialog
+      v-model="showDetail"
+      :row="currentOrder"
+      :loader="getOrderByNo"
+    />
   </div>
 </template>
 
@@ -196,7 +161,15 @@
  */
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getOrderPage, confirmOrder, closeOrder, resendNotify } from '@/api'
+import { getOrderPage, getOrderByNo, confirmOrder, closeOrder, resendNotify } from '@/api'
+import OrderDetailDialog from './OrderDetailDialog.vue'
+import {
+  getStatusText,
+  getStatusType,
+  getNotifyStatusText,
+  getNotifyStatusType,
+  formatDateTime as formatTime
+} from '@/utils/orderDetail'
 
 const queryParams = reactive({
   current: 1,
@@ -215,36 +188,7 @@ const total = ref(0)
 const showDetail = ref(false)
 const currentOrder = ref({})
 
-const getStatusType = (status) => {
-  const types = { 0: 'warning', 1: 'success', 2: 'info', 3: 'danger' }
-  return types[status] || 'info'
-}
-
-const getStatusText = (status) => {
-  const texts = { 0: '待支付', 1: '已支付', 2: '已过期', 3: '已关闭' }
-  return texts[status] || '未知'
-}
-
-// 回调状态类型
-const getNotifyStatusType = (status) => {
-  const types = { 0: 'info', 1: 'success', 2: 'danger' }
-  return types[status] || 'info'
-}
-
-// 回调状态文本
-const getNotifyStatusText = (status) => {
-  const texts = { 0: '未通知', 1: '成功', 2: '失败' }
-  return texts[status] || '未通知'
-}
-
-// 格式化时间
-const formatTime = (time) => {
-  if (!time) return ''
-  if (typeof time === 'string' && time.includes('-')) {
-    return time.replace('T', ' ').substring(0, 19)
-  }
-  return time
-}
+// 状态文案、时间格式化统一放在 @/utils/orderDetail，列表和详情弹窗共用一套口径
 
 const loadData = async () => {
   loading.value = true

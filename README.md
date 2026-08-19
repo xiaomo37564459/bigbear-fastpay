@@ -592,6 +592,101 @@ $sign = strtoupper(md5($signStr));
 
 ---
 
+## 兼容彩虹易支付协议（给 sub2api 之类的通用商城系统对接）
+
+除了原生 `/api/pay/*` 接口，服务端还多提供了一组**彩虹「易支付」通用协议**的入口。你在 sub2api、V 商城、发卡站等等**任何支持易支付协议**的系统后台里，把「易支付」类型的支付方式配置一下，就能直接对接，不用改代码。
+
+> 老的 `/api/pay/*` 接口继续照常工作。两套接口是并存关系，本节只是新增了一条路径。
+
+### 在对方系统（比如 sub2api）后台怎么填
+
+| 字段 | 填什么 |
+|---|---|
+| **商户号（pid）** | 平台里的**商户编号**（形如 `M17390000123400` 那种），到「商户平台 → 开发配置」里能看到 |
+| **商户密钥（key）** | 平台里的 **API Secret**，同上一个页面 |
+| **接口地址** | `http(s)://<你的服务器>/fastpay-server/`（**注意末尾要带 `/`**，对方会自动拼 `submit.php` / `mapi.php`） |
+
+填完，测一笔真金白银 0.01 元的订单，能扫码付款、订单变已支付，就算通了。
+
+### 三个接口的用途
+
+| 接口 | 方法 | 用途 |
+|---|---|---|
+| `/fastpay-server/submit.php` | GET / POST | 用户扫码前的**页面跳转**入口，会自动 302 到平台支付页 |
+| `/fastpay-server/mapi.php` | POST | 对方系统**后端**下单入口，返回 JSON 里带 `payurl` 和 `qrcode` |
+| `/fastpay-server/api.php?act=order` | GET / POST | 订单**查询**入口（对方系统兜底轮询用） |
+| `/fastpay-server/api.php?act=refund` | GET / POST | 退款入口的**兜底占位**：本期不做退款，会明确返回 `{code:-1, msg:"本期未实现退款..."}` |
+
+> ⚠️ **本期不支持退款**：请在 sub2api 后台把 `refund_enabled` / `allow_user_refund` 关掉，用户端就不会出现退款入口，`refund` 也不会被调用。上面那个兜底只是防对方版本忽略配置照发。
+
+### 支付类型（type）
+
+现在支持两种，值和平台内部的 `payType` 一致：
+
+- `alipay` —— 支付宝
+- `wxpay` —— 微信
+
+### 回调通知（`notify_url`）
+
+用户付款成功后，平台会**按易支付协议格式**（GET，带 `pid` / `trade_no` / `out_trade_no` / `type` / `money` / `trade_status=TRADE_SUCCESS` / `sign` / `sign_type=MD5`）请求你在下单时填的 `notify_url`。你的系统收到后，回一个字符串 `success` 就算完成。
+
+签名怎么算见下一节。老的 `/api/pay/*` 接口下单的老订单**回调格式完全没变**，还是 POST，不受影响。
+
+### 签名算法（**和平台原生的不一样，别拿混了**）
+
+彩虹易支付通用协议的签名：
+
+1. 参数按名字 **ASCII 升序**排
+2. 拼成 `a=1&b=2&c=3` 这种形式（**不做 URL 编码**）
+3. 去掉 `sign`、`sign_type`，去掉空值参数
+4. 末尾**直接拼商户密钥**（注意：**不是** `&key=密钥`）
+5. MD5 后转**小写**
+
+例：参数 `{pid: "M001", out_trade_no: "T1", money: "1.00"}`，密钥 `abc`：
+拼串是 `money=1.00&out_trade_no=T1&pid=M001abc`，MD5 得到的 32 位小写就是签名。
+
+对照代码：`fastpay-server/src/main/java/com/fastpay/util/EpaySignUtil.java`。
+
+### 关于路径前缀
+
+服务默认起在 `/fastpay-server` context path 下，所以对外真实地址是 `/fastpay-server/submit.php`。
+
+- **推荐**：直接在 sub2api 后台填带前缀的完整地址，绝大多数版本都能识别
+- **备选**：如果对方版本硬要求根路径（`/submit.php`），在 nginx 里加一段转发：
+
+```nginx
+location ~ ^/(submit|mapi|api)\.php$ {
+    proxy_pass http://127.0.0.1:7001/fastpay-server$request_uri;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+改 nginx 之前先 `nginx -t`，改完记得 reload 前确认其他站点没受影响。
+
+### 快速自测（curl）
+
+```bash
+# 假设商户号 M001、密钥 abc，参数 money=1.00、out_trade_no=T1
+# 签名字符串：money=1.00&name=测试&notify_url=http://your.callback/notify&out_trade_no=T1&pid=M001&type=alipayabc
+# 用 echo -n | md5sum 算出 32 位小写签名后：
+
+curl -X POST http://localhost:7001/fastpay-server/mapi.php \
+  -d 'pid=M001' \
+  -d 'type=alipay' \
+  -d 'out_trade_no=T1' \
+  -d 'name=测试' \
+  -d 'money=1.00' \
+  -d 'notify_url=http://your.callback/notify' \
+  -d 'sign_type=MD5' \
+  -d 'sign=<上面算出来的签名>'
+```
+
+返回 `{"code":1, "msg":"success", "trade_no":"...", "payurl":"...", "qrcode":"..."}` 表示对通了。
+
+---
+
 ## 对接演示
 
 项目提供了完整的对接演示项目 `fastpay-demo`，包含：

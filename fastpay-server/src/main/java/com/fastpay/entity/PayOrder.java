@@ -126,6 +126,12 @@ public class PayOrder implements Serializable {
     private String extParam;
 
     /**
+     * 订单来源：native-原生 FastPay 接口，epay-彩虹易支付协议接口
+     * 回调时按来源选择对应格式，默认 native 保护存量订单
+     */
+    private String orderSource;
+
+    /**
      * 创建时间
      */
     @TableField(fill = FieldFill.INSERT)
