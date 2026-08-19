@@ -72,7 +72,7 @@ SPRING_PROFILES_ACTIVE=prod
 SERVER_ADDRESS=127.0.0.1
 SERVER_PORT=7001
 DB_DRIVER=org.postgresql.Driver
-DB_URL=jdbc:postgresql://10.0.0.11:5432/fastpay
+DB_URL=jdbc:postgresql://<数据库地址>:<端口>/fastpay
 DB_USERNAME=<用户名>
 DB_PASSWORD=<密码>
 FASTPAY_JWT_SECRET=<一串足够长的随机字符串，用 openssl rand -hex 48 生成>
@@ -89,7 +89,16 @@ chown root:fastpay /etc/fastpay/fastpay-server.env
 chmod 640 /etc/fastpay/fastpay-server.env
 ```
 
+上面每个 `<...>` 都是占位符，要换成真实值。真实值只有两个来源：**服务器上这个文件本身**，以及交接时私下传递 —— **不要写进本文档、issue、聊天记录或任何提交**（本仓库是公开的）。
+
+- `<数据库地址>` / `<端口>`：数据库实例的地址和端口。这台机器上的 PostgreSQL 是**几个服务共用**的，地址以运维交接为准
+- `<用户名>` / `<密码>`：数据库账号
+- `FASTPAY_JWT_SECRET`：随机串，用 `openssl rand -hex 48` 自己生成，换服务器时重新生成
+
 **这个文件绝对不能提交进仓库。**
+
+> 🔎 **后面所有需要连数据库的命令，都从这个 env 文件里读地址，不要在命令里手写。**
+> 下面第三节的备份/迁移命令就是这么写的 —— 好处有两个：命令可以照抄不用改，文档里也永远不会出现真实地址。
 
 ### 三个容易踩的坑
 
@@ -104,28 +113,37 @@ chmod 640 /etc/fastpay/fastpay-server.env
 ```bash
 # 0. 【只有本次或后续版本带迁移脚本时才做】先备份库、再跑迁移
 #    备份统一放服务器的 /root/fastpay-backups/（不要放 /opt/fastpay，会被后续部署覆盖）。
-#    连接参数直接从 env 文件读，不要在命令行里写明文密码。
+#    地址/账号/密码全部从 env 文件读 —— 命令里不出现任何真实值，可以直接照抄。
+#    下面的 VER 换成本次要发的版本号（例如 v1.2.0），其余原样。
 ssh root@150.158.99.251 '
   set -a; . /etc/fastpay/fastpay-server.env; set +a
   export PGPASSWORD="$DB_PASSWORD"
+  # 从 DB_URL 里拆出 host / port / dbname，不要手写
+  eval $(echo "$DB_URL" | sed -E "s#^jdbc:postgresql://([^:/]+):([0-9]+)/([^?]+).*#DBH=\1 DBP=\2 DBN=\3#")
+  VER=<本次版本>
   TS=$(date +%Y%m%d-%H%M%S)
   mkdir -p /root/fastpay-backups
-  pg_dump -h 10.0.0.11 -p 5432 -U "$DB_USERNAME" -d fastpay -F c \
-    -f /root/fastpay-backups/fastpay-${TS}-before-<本次版本>.dump
-  cp -a /opt/fastpay/fastpay-server-1.0.0.jar /root/fastpay-backups/fastpay-server-1.0.0.jar.pre-<本次版本>-${TS}
-  tar -czf /root/fastpay-backups/www-pre-<本次版本>-${TS}.tar.gz -C /opt/fastpay/www .
-  # 备份完先验一下能读，别等到要回退时才发现是坏的
-  pg_restore -l /root/fastpay-backups/fastpay-${TS}-before-<本次版本>.dump | grep -c "TABLE DATA"
+  pg_dump -h "$DBH" -p "$DBP" -U "$DB_USERNAME" -d "$DBN" -F c \
+    -f /root/fastpay-backups/fastpay-${TS}-before-${VER}.dump
+  cp -a /opt/fastpay/fastpay-server-1.0.0.jar /root/fastpay-backups/fastpay-server-1.0.0.jar.pre-${VER}-${TS}
+  tar -czf /root/fastpay-backups/www-pre-${VER}-${TS}.tar.gz -C /opt/fastpay/www .
+  # 备份完先验一下能读，别等到要回退时才发现是坏的（应打印出表的张数）
+  pg_restore -l /root/fastpay-backups/fastpay-${TS}-before-${VER}.dump | grep -c "TABLE DATA"
 '
 
 # 传本次要跑的迁移脚本（下面示例是 V1.1，如果这版没有迁移就跳过这一步）
 scp fastpay-server/src/main/resources/db/migration/V1_1__admin_account_management_pg.sql \
-    root@150.158.99.251:/tmp/
+    root@150.158.99.251:/root/fastpay-ops/
 
 # 跑迁移（生产用 PostgreSQL 走 pg 版本；如果哪台机器用的是 MySQL，换 mysql 版本）
-ssh root@150.158.99.251 \
-  'PGPASSWORD=$DB_PASSWORD psql -h <数据库host> -U <用户> -d fastpay \
-     -f /tmp/V1_1__admin_account_management_pg.sql && rm /tmp/V1_1__admin_account_management_pg.sql'
+# 同样从 env 读连接信息；ON_ERROR_STOP=1 保证出错立刻停，不会跑一半还往下走
+ssh root@150.158.99.251 '
+  set -a; . /etc/fastpay/fastpay-server.env; set +a
+  export PGPASSWORD="$DB_PASSWORD"
+  eval $(echo "$DB_URL" | sed -E "s#^jdbc:postgresql://([^:/]+):([0-9]+)/([^?]+).*#DBH=\1 DBP=\2 DBN=\3#")
+  psql -h "$DBH" -p "$DBP" -U "$DB_USERNAME" -d "$DBN" -v ON_ERROR_STOP=1 -e \
+    -f /root/fastpay-ops/V1_1__admin_account_management_pg.sql
+'
 
 # 1. 传后端 jar
 scp fastpay-server/target/fastpay-server-1.0.0.jar root@150.158.99.251:/opt/fastpay/
