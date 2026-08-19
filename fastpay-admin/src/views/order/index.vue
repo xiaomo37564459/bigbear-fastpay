@@ -108,50 +108,12 @@
     </div>
 
     <!-- 订单详情弹窗 -->
-    <el-dialog v-model="detailVisible" title="订单详情" width="700px">
-      <el-descriptions :column="2" border>
-        <el-descriptions-item label="平台订单号">{{ currentOrder.orderNo }}</el-descriptions-item>
-        <el-descriptions-item label="商户订单号">{{ currentOrder.outTradeNo }}</el-descriptions-item>
-        <el-descriptions-item label="所属商户">{{ currentOrder.merchantName }}</el-descriptions-item>
-        <el-descriptions-item label="所属店铺">{{ currentOrder.shopName || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="订单金额">
-          <span class="amount-text">¥{{ currentOrder.amount }}</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="实付金额">
-          <span class="amount-text">¥{{ currentOrder.payAmount || '-' }}</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="支付类型">
-          <el-tag :type="currentOrder.payType === 'wxpay' ? 'success' : 'primary'" size="small">
-            {{ currentOrder.payType === 'wxpay' ? '微信支付' : '支付宝' }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="支付方式">
-          {{ currentOrder.payMethod === 'page' ? '页面跳转' : 'API接口' }}
-        </el-descriptions-item>
-        <el-descriptions-item label="商品名称" :span="2">{{ currentOrder.subject }}</el-descriptions-item>
-        <el-descriptions-item label="订单状态">
-          <el-tag :type="getStatusType(currentOrder.status)" size="small">
-            {{ getStatusText(currentOrder.status) }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="回调状态">
-          <template v-if="currentOrder.status === 1">
-            <el-tag :type="getNotifyStatusType(currentOrder.notifyStatus)" size="small">
-              {{ getNotifyStatusText(currentOrder.notifyStatus) }}
-            </el-tag>
-            <span v-if="currentOrder.notifyCount > 0" class="notify-count">(已通知{{ currentOrder.notifyCount }}次)</span>
-          </template>
-          <span v-else>-</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="回调地址" :span="2">{{ currentOrder.notifyUrl || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="跳转地址" :span="2">{{ currentOrder.returnUrl || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ formatTime(currentOrder.createTime) }}</el-descriptions-item>
-        <el-descriptions-item label="支付时间">{{ formatTime(currentOrder.payTime) || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="过期时间">{{ formatTime(currentOrder.expireTime) }}</el-descriptions-item>
-        <el-descriptions-item label="最后通知时间">{{ formatTime(currentOrder.lastNotifyTime) || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="客户端IP">{{ currentOrder.clientIp }}</el-descriptions-item>
-      </el-descriptions>
-    </el-dialog>
+    <OrderDetailDialog
+      v-model="detailVisible"
+      :row="currentOrder"
+      :loader="getOrderByNo"
+      show-merchant
+    />
   </div>
 </template>
 
@@ -161,7 +123,15 @@
  */
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getMerchantList, getOrderPage, confirmOrder, closeOrder, resendNotify } from '@/api'
+import { getMerchantList, getOrderPage, getOrderByNo, confirmOrder, closeOrder, resendNotify } from '@/api'
+import OrderDetailDialog from './OrderDetailDialog.vue'
+import {
+  getStatusText,
+  getStatusType,
+  getNotifyStatusText,
+  getNotifyStatusType,
+  formatDateTime as formatTime
+} from '@/utils/orderDetail'
 
 // 商户列表
 const merchants = ref([])
@@ -184,40 +154,7 @@ const total = ref(0)
 const detailVisible = ref(false)
 const currentOrder = ref({})
 
-// 状态类型
-const getStatusType = (status) => {
-  const types = { 0: 'warning', 1: 'success', 2: 'info', 3: 'danger' }
-  return types[status] || 'info'
-}
-
-// 状态文本
-const getStatusText = (status) => {
-  const texts = { 0: '待支付', 1: '已支付', 2: '已过期', 3: '已关闭' }
-  return texts[status] || '未知'
-}
-
-// 回调状态类型
-const getNotifyStatusType = (status) => {
-  const types = { 0: 'info', 1: 'success', 2: 'danger' }
-  return types[status] || 'info'
-}
-
-// 回调状态文本
-const getNotifyStatusText = (status) => {
-  const texts = { 0: '未通知', 1: '成功', 2: '失败' }
-  return texts[status] || '未通知'
-}
-
-// 格式化时间
-const formatTime = (time) => {
-  if (!time) return ''
-  // 如果已经是格式化的字符串，直接返回
-  if (typeof time === 'string' && time.includes('-')) {
-    // 处理 ISO 格式或 LocalDateTime 格式
-    return time.replace('T', ' ').substring(0, 19)
-  }
-  return time
-}
+// 状态文案、时间格式化统一放在 @/utils/orderDetail，列表和详情弹窗共用一套口径
 
 // 加载商户列表
 const loadMerchants = async () => {
