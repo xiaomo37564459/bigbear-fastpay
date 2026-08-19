@@ -16,7 +16,7 @@ import java.util.List;
 /**
  * 管理后台 - 店铺管理控制器
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "管理后台-店铺管理", description = "店铺的增删改查等操作")
 @RestController

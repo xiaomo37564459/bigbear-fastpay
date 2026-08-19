@@ -4,7 +4,7 @@ package com.fastpay.common;
  * 系统常量定义
  * 集中管理系统中使用的各种常量值
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public class Constants {
 

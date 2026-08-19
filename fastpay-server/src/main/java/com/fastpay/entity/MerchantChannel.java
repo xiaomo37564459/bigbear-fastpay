@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * 存储商户的发送通道
  * 通道指的是：支付宝、微信、第三方聚合支付平台
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 @TableName("fp_merchant_channel")

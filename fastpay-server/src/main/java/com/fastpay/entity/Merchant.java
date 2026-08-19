@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * 商户实体类
  * 存储商户（有个人收款需求的商家）信息
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 @TableName("fp_merchant")

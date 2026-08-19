@@ -64,10 +64,13 @@ knife4j:
 fastpay:
   # JWT 配置
   jwt:
-    secret: FastPaySecretKey2025Pjs8fk2Onsfk
+    # 仅限本地开发/自动化测试的示意密钥，明文放在这里是刻意为之：
+    #   1) 不要把它复制到生产 —— 生产走 application-prod.yml，读环境变量 FASTPAY_JWT_SECRET
+    #   2) 本地想换成自己的随机值：环境变量 FASTPAY_JWT_SECRET=$(openssl rand -hex 48) 覆盖即可
+    secret: ${FASTPAY_JWT_SECRET:dev-only-jwt-secret-do-not-use-in-prod-1a2b3c4d5e6f7890}
     # Token 有效期（小时）
     expire-hours: 12
-  
+
   # 管理员初始账号（仅在数据库里没有管理员时用一次，用于本地开发和自动化测试）
   # 生产环境的对应项在 application-prod.yml 里，故意不配置密码，让 InitConfig 随机生成
   admin:
@@ -78,10 +81,11 @@ fastpay:
   pay:
     # 订单超时时间（分钟）
     order-timeout-minutes: 3
-    # 支付页面域名（商户前端地址）
-    page-domain: http://121.4.28.146/fastpay-merchant
-  
+    # 支付页面域名（商户前端地址）；本地默认指到商户前端 dev server 3002 端口，
+    # 想指向线上时用环境变量：FASTPAY_PAGE_DOMAIN=https://pay.copliot.cloud/fastpay-merchant
+    page-domain: ${FASTPAY_PAGE_DOMAIN:http://localhost:3002/fastpay-merchant}
+
   # 监听软件回调配置
   notify:
     # 监听软件回调地址（完整URL，用于模版展示）
-    callback-url: http://121.4.28.146/fastpay-server/api/notify/callback
+    callback-url: ${FASTPAY_NOTIFY_CALLBACK_URL:http://localhost:7001/fastpay-server/api/notify/callback}

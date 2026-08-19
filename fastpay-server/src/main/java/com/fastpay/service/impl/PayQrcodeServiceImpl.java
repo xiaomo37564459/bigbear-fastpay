@@ -24,7 +24,7 @@ import java.util.List;
 /**
  * 收款二维码服务实现类
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Service

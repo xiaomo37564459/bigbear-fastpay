@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * 收款二维码服务接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public interface PayQrcodeService extends IService<PayQrcode> {
 

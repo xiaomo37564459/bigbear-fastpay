@@ -9,7 +9,7 @@ import java.util.Map;
 /**
  * 控制台统计数据 VO
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class DashboardVO {

@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Mapper;
 /**
  * 管理员 Mapper 接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Mapper
 public interface AdminMapper extends BaseMapper<Admin> {
