@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatDateTime,
+  splitDateTime,
   formatAmount,
   formatPayType,
   formatPayMethod,
@@ -54,6 +55,20 @@ describe('订单详情 - 取值与格式化', () => {
     expect(formatDateTime('2026-08-19T10:30:00')).toBe('2026-08-19 10:30:00')
     expect(formatDateTime('2026-08-19 10:30:00')).toBe('2026-08-19 10:30:00')
     expect(formatDateTime('2026-08-19T10:30:00.123+08:00')).toBe('2026-08-19 10:30:00')
+  })
+
+  it('时间拆成日期和时刻两段，年月日时分秒一个都不能少', () => {
+    expect(splitDateTime('2026-08-19T10:30:00')).toEqual({ date: '2026-08-19', time: '10:30:00' })
+    expect(splitDateTime('2026-08-19 10:30:00')).toEqual({ date: '2026-08-19', time: '10:30:00' })
+    // 拼回去必须和整段格式化的结果完全一致，列表里才不会漏掉秒
+    const parts = splitDateTime('2026-08-19T10:30:00.123+08:00')
+    expect(`${parts.date} ${parts.time}`).toBe(formatDateTime('2026-08-19T10:30:00.123+08:00'))
+  })
+
+  it('时间为空时两段都是空串，由页面自己决定显示什么占位符', () => {
+    expect(splitDateTime(null)).toEqual({ date: '', time: '' })
+    expect(splitDateTime(undefined)).toEqual({ date: '', time: '' })
+    expect(splitDateTime('')).toEqual({ date: '', time: '' })
   })
 
   it('金额为空时显示占位符而不是 ¥-，0 元要正常显示', () => {

@@ -37,53 +37,69 @@
     <!-- 数据表格 -->
     <div class="page-card" style="margin-top: 16px">
       <div class="card-body">
-        <el-table :data="tableData" v-loading="loading" stripe>
-          <el-table-column prop="orderNo" label="平台订单号" width="190" />
-          <el-table-column prop="outTradeNo" label="商户订单号" width="150" />
-          <el-table-column prop="merchantName" label="商户" width="100" />
-          <el-table-column prop="shopName" label="店铺" width="100" show-overflow-tooltip />
-          <el-table-column label="金额" width="90">
+        <el-table :data="tableData" v-loading="loading" stripe class="order-table">
+          <el-table-column label="订单号" :min-width="COL.orderNo">
+            <template #default="{ row }">
+              <div class="order-no" :title="row.orderNo">{{ row.orderNo }}</div>
+              <div class="order-no-sub" :title="row.outTradeNo">
+                商户单号 {{ row.outTradeNo || '-' }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="商户/店铺" :min-width="COL.merchant">
+            <template #default="{ row }">
+              <div class="cell-main" :title="row.merchantName">{{ row.merchantName || '-' }}</div>
+              <div class="cell-sub" :title="row.shopName">{{ row.shopName || '-' }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="金额" :width="COL.amount" align="right">
             <template #default="{ row }">
               <span class="amount-text">¥{{ row.amount }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="支付类型" width="80">
+          <el-table-column label="支付类型" :width="COL.payType">
             <template #default="{ row }">
               <el-tag :type="row.payType === 'wxpay' ? 'success' : 'primary'" size="small">
                 {{ row.payType === 'wxpay' ? '微信' : '支付宝' }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="75">
+          <el-table-column label="状态" :width="COL.status">
             <template #default="{ row }">
               <el-tag :type="getStatusType(row.status)" size="small">
                 {{ getStatusText(row.status) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="回调状态" width="90">
+          <el-table-column label="回调状态" :width="COL.notify">
             <template #default="{ row }">
               <template v-if="row.status === 1">
                 <el-tag :type="getNotifyStatusType(row.notifyStatus)" size="small">
                   {{ getNotifyStatusText(row.notifyStatus) }}
                 </el-tag>
-                <span v-if="row.notifyCount > 0" class="notify-count">({{ row.notifyCount }})</span>
+                <div v-if="row.notifyCount > 0" class="notify-count">已通知 {{ row.notifyCount }} 次</div>
               </template>
               <span v-else class="text-muted">-</span>
             </template>
           </el-table-column>
-          <el-table-column label="创建时间" width="160">
+          <!-- 时间列拆成"日期 / 时刻"上下两行：一行放不下会被右侧固定的操作列截掉，
+               拆两行后完整时间戳始终看得全，列宽还从 160 降到 100 -->
+          <el-table-column label="创建时间" :width="COL.createTime">
             <template #default="{ row }">
-              {{ formatTime(row.createTime) }}
+              <div class="time-date">{{ splitTime(row.createTime).date }}</div>
+              <div class="time-clock">{{ splitTime(row.createTime).time }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="支付时间" width="160">
+          <el-table-column label="支付时间" :width="COL.payTime">
             <template #default="{ row }">
-              <span v-if="row.payTime">{{ formatTime(row.payTime) }}</span>
+              <template v-if="row.payTime">
+                <div class="time-date">{{ splitTime(row.payTime).date }}</div>
+                <div class="time-clock">{{ splitTime(row.payTime).time }}</div>
+              </template>
               <span v-else class="text-muted">-</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="200" fixed="right">
+          <el-table-column label="操作" :width="COL.action" fixed="right" class-name="action-cell">
             <template #default="{ row }">
               <el-button type="primary" link size="small" @click="handleView(row)">详情</el-button>
               <el-button v-if="row.status === 0" type="success" link size="small" @click="handleConfirm(row)">确认支付</el-button>
@@ -125,12 +141,13 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getMerchantList, getOrderPage, getOrderByNo, confirmOrder, closeOrder, resendNotify } from '@/api'
 import OrderDetailDialog from './OrderDetailDialog.vue'
+import { ORDER_COLUMN_WIDTHS as COL } from './columns'
 import {
   getStatusText,
   getStatusType,
   getNotifyStatusText,
   getNotifyStatusType,
-  formatDateTime as formatTime
+  splitDateTime as splitTime
 } from '@/utils/orderDetail'
 
 // 商户列表
@@ -248,8 +265,66 @@ onMounted(() => {
 }
 
 .notify-count {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+/* 单元格左右内边距从 12px 收到 10px：9 列一共省出 36px，
+   刚好够整张表在 1280 宽的窗口里放下，不用横向滚动 */
+.order-table :deep(.el-table .cell) {
+  padding-left: 10px;
+  padding-right: 10px;
+  line-height: 1.4;
+}
+
+/* 操作列按钮间距收到 8px，「详情 / 确认支付 / 关闭」三个按钮才能排成一行不折行 */
+.order-table :deep(.action-cell .el-button + .el-button) {
+  margin-left: 8px;
+}
+
+/* 主次两行：主信息正常色，次信息灰色小字，都不换行、超长省略并挂 title 提示 */
+.order-no,
+.order-no-sub,
+.cell-main,
+.cell-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-no {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #303133;
+}
+
+.order-no-sub,
+.cell-sub {
   font-size: 12px;
   color: #909399;
-  margin-left: 4px;
+  margin-top: 2px;
+}
+
+.cell-main {
+  color: #303133;
+}
+
+/* 时间：日期一行、时刻一行，数字用等宽字形，两行左边对得齐 */
+.time-date,
+.time-clock {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.time-date {
+  color: #303133;
+}
+
+.time-clock {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
 }
 </style>
