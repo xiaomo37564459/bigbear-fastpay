@@ -5,7 +5,7 @@ import OrderDetailDialog from '@/views/order/OrderDetailDialog.vue'
 const row = {
   orderNo: 'FP20260819103000123456789012',
   outTradeNo: 'SHOP-ORDER-20260819-000000000001',
-  merchantName: '大熊测试商户',
+  merchantName: '示例测试商户',
   shopName: '总部旗舰店',
   subject: '年度会员套餐',
   amount: '199.00',

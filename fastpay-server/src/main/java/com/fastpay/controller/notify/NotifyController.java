@@ -38,7 +38,7 @@ import org.springframework.web.bind.annotation.RestController;
  *   "sign": "xxx"
  * }
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Tag(name = "支付通知回调", description = "接收监听软件推送的支付通知,进行转发给对应的商户")

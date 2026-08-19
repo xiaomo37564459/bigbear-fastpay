@@ -13,7 +13,7 @@ import java.util.Map;
  * 首页控制器
  * 提供API服务状态检查
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "系统接口", description = "系统状态检查相关接口")
 @RestController

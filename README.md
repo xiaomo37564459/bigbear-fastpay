@@ -9,11 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/X-TQ/bigbear-fastpay">
+  <a href="https://github.com/xiaomo37564459/bigbear-fastpay">
     <img src="https://img.shields.io/badge/GitHub-bigbear--fastpay-blue?logo=github" alt="GitHub">
-  </a>
-  <a href="https://gitee.com/nchfly/bigbear-fastpay">
-    <img src="https://img.shields.io/badge/Gitee-bigbear--fastpay-red?logo=gitee" alt="Gitee">
   </a>
 </p>
 
@@ -43,13 +40,12 @@ FAST 易支付是一款面向个人开发者和小型商户的**免签支付平�
 
 ## 在线演示
 
-| 系统 | 演示地址 | 账号密码 |
-|------|----------|----------|
-| 🏪 **商户平台** | [http://121.4.28.146/fastpay-merchant/](http://121.4.28.146/fastpay-merchant/) | `demo` / `123456` |
-| 🔧 **管理后台** | [http://121.4.28.146/fastpay-admin/](http://121.4.28.146/fastpay-admin/) | - |
-| 🧪 **对接演示** | [http://121.4.28.146:7002/](http://121.4.28.146:7002/) | - |
+| 系统 | 演示地址 |
+|------|----------|
+| 🏪 **商户平台** | [https://pay.copliot.cloud/fastpay-merchant/](https://pay.copliot.cloud/fastpay-merchant/) |
+| 🔧 **管理后台** | [https://pay.copliot.cloud/fastpay-admin/](https://pay.copliot.cloud/fastpay-admin/) |
 
-> 💡 演示环境仅供体验，请勿用于生产环境
+> 💡 演示环境仅供体验，请勿用于生产环境。演示账号请联系管理员申请。
 
 ## 功能特性
 
@@ -220,20 +216,86 @@ Fastpay易支付使用的是开源监听工具是SmsForwarder。
 
 ### 支付流程
 
+平台**不是**微信/支付宝的官方支付接口，走的是「个人收款码 + 手机监听」这条路：商户把自己的个人收款码传上来，手机上装一个监听软件盯着到账通知；用户扫码付款后，监听软件把「收到 X 元」上报给平台，平台按**金额 + 支付类型 + 时间**匹配出是哪一笔订单，再通知商户系统发货。
+
+#### 用平台原生接口的流程
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 用户
+    participant M as 商户系统
+    participant P as FAST 易支付平台
+    participant S as 商户手机<br/>监听软件
+
+    U->>M: 1. 下单，点「去支付」
+    M->>M: 2. 按原生规则算签名（MD5 转大写）
+    M->>P: 3. POST /api/pay/create 或 /api/pay/submit
+    P->>P: 4. 验签 → 查商户 → 挑一张可用收款码 → 建订单
+    P-->>M: 5. 返回收款码（或 302 跳到平台支付页）
+    M-->>U: 6. 展示收款二维码
+    U->>U: 7. 扫码付款
+
+    Note over U,S: 钱直接进商户的个人收款账户，不经过平台
+
+    S->>P: 8. 手机收到到账通知，上报「收到 10.00 元」
+    P->>P: 9. 按金额+支付类型+时间匹配订单，标记已支付
+    P-->>U: 10. WebSocket 推「支付成功」，支付页立刻跳转
+    P->>M: 11. 异步回调：POST 到商户的 notifyUrl
+    M->>M: 12. 验签 → 发货
+    M-->>P: 13. 回一个字符串 success
+
+    Note over P,M: 没收到 success 就重试，<br/>最多 5 次，间隔 1/2/4/8/16 分钟
 ```
-商户系统 ──> 创建订单 ──> 支付网关 ──> 返回支付URL
-                                          │
-用户 <────────── 跳转支付页面 <────────────┘
-  │
-  └──> 扫码支付 ──> 监听软件检测到支付 ──> 回调通知支付网关
-                                              │
-                    ┌─────────────────────────┘
-                    │
-                    ▼
-        WebSocket推送支付结果 ──> 支付页面显示成功
-                    │
-                    └──> 回调通知商户系统 ──> 商户处理业务
+
+#### 通过彩虹易支付协议接入的流程
+
+同一条链路，区别只在**头尾多了一层「协议翻译」**：外部按易支付格式进来，翻译成平台自己的下单流程；回调时再翻译回易支付格式发出去。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 用户
+    participant X as 现成系统<br/>（sub2api / 发卡站）
+    participant G as 协议翻译层<br/>EpayGatewayController
+    participant P as FAST 易支付平台<br/>（核心下单逻辑）
+    participant S as 商户手机<br/>监听软件
+
+    U->>X: 1. 下单，选「易支付」
+    X->>X: 2. 按易支付规则算签名（MD5 转小写）
+    X->>G: 3. POST /mapi.php 或 GET/POST /submit.php
+
+    rect rgb(240, 245, 255)
+        Note over G: 翻译层（进来方向）
+        G->>G: 4. 用 pid 查商户 → 用易支付算法验签
+        G->>G: 5. pid→merchantNo、money→amount、<br/>type→payType、name→subject
+        G->>P: 6. 调用平台内部下单
+        P->>P: 7. 挑一张可用收款码 → 建订单<br/>打上标记 order_source=epay
+        P-->>G: 8. 返回订单号和收款码
+        G-->>X: 9. 翻译成易支付格式的响应<br/>{code:1, trade_no, payurl, qrcode}
+    end
+
+    X-->>U: 10. 展示收款二维码
+    U->>U: 11. 扫码付款
+    S->>P: 12. 手机上报「收到 10.00 元」
+    P->>P: 13. 匹配到订单，标记已支付
+
+    rect rgb(255, 245, 240)
+        Note over P,X: 翻译层（回去方向）
+        P->>P: 14. 看订单的 order_source 字段 = epay，<br/>所以走易支付格式
+        P->>X: 15. GET 请求 notify_url，参数是 pid/trade_no/<br/>out_trade_no/type/money/trade_status/sign
+        X->>X: 16. 用易支付算法验签 → 发货
+        X-->>P: 17. 回一个字符串 success
+    end
 ```
+
+> **`order_source` 是整个兼容方案的关键。** 订单建好那一刻就记下「这单从哪套接口进来的」（`native` / `epay`），付款成功后照这个字段决定用哪套格式发回调。
+>
+> **这条约束是为了防止什么问题？** 防止「老订单被新格式回调打坏」—— 如果不存来源、回调时靠猜，新功能上线的一瞬间所有存量老订单的回调格式就全变了，商户系统会集体验签失败、集体不发货。存了来源，老订单永远走老格式，商户一行代码都不用改。
+
+**异步回调和同步跳转别搞混**：`notifyUrl`（异步回调）是平台服务器在后台通知你的服务器，用户关掉浏览器照样会发、收不到会重试；`returnUrl`（同步跳转）只是用户浏览器跳回你的页面，关掉就没了。**发货只能写在异步回调里。**
+
+👉 完整的时序说明、回调重试策略、两套接口的全部参数，见 **[开发对接文档](docs/API.md)**。
 
 ---
 
@@ -355,12 +417,7 @@ bigbear-fastpay/
 ### 1. 克隆项目
 
 ```bash
-# GitHub
-git clone https://github.com/X-TQ/bigbear-fastpay.git
-
-# Gitee（国内镜像）
-git clone https://gitee.com/nchfly/bigbear-fastpay.git
-
+git clone https://github.com/xiaomo37564459/bigbear-fastpay.git
 cd bigbear-fastpay
 ```
 
@@ -390,7 +447,10 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 服务地址：http://localhost:7001/fastpay-server
 
-**默认管理员账号**：`fastpay` / `123456@`
+**首次启动的管理员账号**：
+- 用户名默认 `admin`，可用环境变量 `FASTPAY_ADMIN_INITIAL_USERNAME` 覆盖
+- 密码不设默认值，服务首次启动时随机生成一次 16 位密码，明文只写到 `warn` 级别日志里一次；生产环境请从启动日志里拿到后立刻改
+- 想在本地开发指定固定密码，用环境变量 `FASTPAY_ADMIN_INITIAL_PASSWORD=...` 启动
 
 ### 4. 启动管理后台
 
@@ -430,165 +490,127 @@ mvn spring-boot:run
 
 ## API 接口文档
 
-### 接口概览
+> 📘 **完整接口文档在这里：[docs/API.md](docs/API.md)** —— 每个接口的全部参数（字段名、类型、必填、含义、示例）、返回字段说明、错误码表、两套签名算法的完整可抄示例、从零接入指引、排查手册，都在那份文档里。下面是速查版。
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/pay/submit` | POST | 页面跳转支付 |
-| `/api/pay/create` | POST | API 创建订单 |
-| `/api/pay/query` | GET | 查询订单状态 |
+### 平台开了两套接口，先选一套
 
-### 页面跳转支付
+| | 第一套：平台原生接口 | 第二套：彩虹易支付协议接口 |
+|---|---|---|
+| 地址 | `/api/pay/create`、`/api/pay/submit` … | `/submit.php`、`/mapi.php`、`/api.php` |
+| 参数名风格 | `merchantNo`、`outTradeNo`（驼峰） | `pid`、`out_trade_no`（下划线） |
+| 签名 | 末尾拼 `&key=密钥`，MD5 转**大写** | 末尾**直接拼密钥**，MD5 转**小写** |
+| 回调 | **POST** 表单 | **GET** 查询串 |
+| 谁该用 | 自己写代码对接 | 用现成系统（sub2api、发卡站、V 商城） |
 
-适用于网站接入，通过表单提交跳转到支付页面。
+**⚠️ 两套签名算法不一样，混用必定验签失败 —— 这是接入方最容易踩的坑。** 走 `/api/pay/*` 用第一套，走 `*.php` 用第二套，详见 [docs/API.md 第八章](docs/API.md#八两套签名算法千万别拿混)。
 
-**请求地址**：`POST /api/pay/submit`
+两套**共用同一个商户号和密钥**，不用另外申请：易支付的 `pid` 就是平台的商户编号 `merchantNo`，易支付的商户密钥就是平台的 `apiSecret`，都在「商户平台 → 开发配置」里看。
 
-**请求参数**：
+### 接口速查
 
-| 参数 | 必填 | 类型 | 说明 |
+**所有地址都要加前缀 `https://你的域名/fastpay-server`**（服务的 context-path）。
+
+| 接口 | 方法 | 要签名 | 说明 |
 |------|------|------|------|
-| merchantNo | 是 | String | 商户编号 |
-| outTradeNo | 是 | String | 商户订单号（唯一） |
-| amount | 是 | String | 订单金额（元），如 10.00 |
-| subject | 是 | String | 商品名称 |
-| payType | 是 | String | 支付类型：wxpay / alipay |
-| returnUrl | 否 | String | 支付成功后跳转地址 |
-| notifyUrl | 否 | String | 异步回调地址 |
-| extParam | 否 | String | 扩展参数，回调时原样返回 |
-| timestamp | 是 | Long | 时间戳（秒） |
-| sign | 是 | String | 签名 |
+| `/api/pay/create` | POST | 原生 | 后端下单，返回收款码内容 |
+| `/api/pay/submit` | POST | 原生 | 表单下单，302 跳到平台支付页 |
+| `/api/pay/query` | GET | 否 | 用商户订单号查订单状态 |
+| `/api/pay/page/{orderNo}` | GET | 否 | 支付页面数据 |
+| `/api/pay/status/{orderNo}` | GET | 否 | 轮询支付状态 |
+| `/api/pay/result/{orderNo}` | GET | 否 | 支付结果页数据 |
+| `/ws/pay/{merchantNo}/{outTradeNo}` | WS | 否 | 支付结果实时推送 |
+| `/submit.php` | GET/POST | 易支付 | 易支付页面跳转下单 |
+| `/mapi.php` | POST | 易支付 | 易支付 API 下单，返回 JSON |
+| `/api.php?act=order` | GET/POST | 易支付 | 易支付查订单 |
+| `/api.php?act=refund` | GET/POST | —— | 退款占位，本期返回「未实现」 |
+| `/api/notify/callback` | POST | HmacSHA256 | 监听软件上报到账（平台内部用） |
+| `/api/merchant/callback-config` | PUT | 否（要登录） | 改回调地址 / 跳转地址 |
+| `/api/merchant/reset-key` | POST | 否（要登录） | 重置 API 密钥 |
+| `/api/merchant/order/{orderNo}/notify` | POST | 否（要登录） | 手动重发回调 |
 
-**HTML 表单示例**：
+服务启动后还可以看在线接口文档：`https://你的域名/fastpay-server/doc.html`
 
-```html
-<form action="https://your-domain/fastpay-server/api/pay/submit" method="POST">
-  <input type="hidden" name="merchantNo" value="YOUR_MERCHANT_NO">
-  <input type="hidden" name="outTradeNo" value="ORDER202512050001">
-  <input type="hidden" name="amount" value="10.00">
-  <input type="hidden" name="subject" value="测试商品">
-  <input type="hidden" name="payType" value="wxpay">
-  <input type="hidden" name="returnUrl" value="https://your-site.com/pay/result">
-  <input type="hidden" name="timestamp" value="1733400000">
-  <input type="hidden" name="sign" value="签名值">
-  <button type="submit">立即支付</button>
-</form>
-```
-
-### API 创建订单
-
-适用于 APP 或自定义支付页面，后端调用获取收款二维码。
-
-**请求地址**：`POST /api/pay/create`
+### 原生接口下单：`POST /api/pay/create`
 
 **Content-Type**：`application/json`
 
-**请求参数**：
+| 参数 | 必填 | 类型 | 说明 |
+|------|------|------|------|
+| `merchantNo` | 是 | String | 商户编号 |
+| `outTradeNo` | 是 | String | 商户订单号（同一商户下唯一） |
+| `shopNo` | 是 | String | 店铺编号，决定用哪个店的收款码 |
+| `amount` | 是 | 数字 | 订单金额（元），最小 `0.01` |
+| `subject` | 是 | String | 商品名称 |
+| `payType` | 是 | String | `wxpay` / `alipay` |
+| `timestamp` | 是 | 数字 | 时间戳，**10 位秒级**，和服务器差 5 分钟内 |
+| `sign` | 是 | String | 签名，**32 位大写** |
+| `extParam` | 否 | String | 扩展参数，回调时原样返回 |
+
+> **⚠️ 三个最容易踩的坑：**
+> 1. **`shopNo` 是必填的**，而且要参与签名 —— 最常被漏掉的就是它。
+> 2. **这个接口没有 `notifyUrl` 参数**：回调地址取商户在「开发配置」里配的那个，请求里传了不生效，还会导致验签失败。要改用 `PUT /api/merchant/callback-config`。
+> 3. **`returnUrl` 只在 `/api/pay/submit` 生效**，`create` 里传了不起作用，但传了就必须参与签名。建议直接别传。
+
+**响应示例**
 
 ```json
 {
-  "merchantNo": "YOUR_MERCHANT_NO",
-  "outTradeNo": "ORDER202512050001",
-  "amount": "10.00",
-  "subject": "测试商品",
-  "payType": "wxpay",
-  "timestamp": 1733400000,
-  "sign": "签名值"
-}
-```
-
-**响应示例**：
-
-```json
-{
-  "code": 0,
-  "message": "success",
+  "code": 200,
+  "message": "操作成功",
   "data": {
-    "orderNo": "P202512050001",
-    "outTradeNo": "ORDER202512050001",
+    "orderNo": "FP20260819120000123456",
+    "outTradeNo": "ORDER20260819001",
     "amount": 10.00,
     "payType": "wxpay",
-    "qrcodeUrl": "wxp://xxx",
-    "payPageUrl": "https://your-domain/pay?orderNo=xxx",
-    "expireTime": 1733403600
-  }
+    "payMethod": "api",
+    "qrcodeUrl": "weixin://wxpay/bizpayurl?pr=xxxxxxxx",
+    "payPageUrl": null,
+    "expireTime": 1755561780
+  },
+  "timestamp": 1755561600123
 }
 ```
 
-### 签名算法
+**⚠️ 成功的 `code` 是 `200` 不是 `0`；失败时 HTTP 状态码也是 200，判断成败只能看响应体里的 `code`。**
 
-1. 将所有非空参数按 **字母顺序** 排序
-2. 拼接成 `key=value&key=value` 格式
-3. 最后拼接 `&key=API_SECRET`
-4. 对整个字符串进行 **MD5** 加密
-5. 转换为 **大写**
+### 签名算法：两套，分开写
 
-**Java 示例**：
+#### 第一套（原生 `/api/pay/*`）
 
-```java
-public static String sign(Map<String, String> params, String apiSecret) {
-    // 1. 按字母顺序排序
-    TreeMap<String, String> sortedParams = new TreeMap<>(params);
-    
-    // 2. 拼接参数
-    StringBuilder sb = new StringBuilder();
-    for (Map.Entry<String, String> entry : sortedParams.entrySet()) {
-        if (entry.getValue() != null && !entry.getValue().isEmpty()) {
-            sb.append(entry.getKey()).append("=").append(entry.getValue()).append("&");
-        }
-    }
-    sb.append("key=").append(apiSecret);
-    
-    // 3. MD5 加密并转大写
-    return DigestUtils.md5Hex(sb.toString()).toUpperCase();
-}
+排序 → 拼 `a=1&b=2` → 末尾拼 **`&key=密钥`** → MD5 → **转大写**
+
+```
+amount=10.00&merchantNo=M17390000123400&outTradeNo=ORDER20260819001&payType=wxpay&shopNo=S17390000123401&subject=测试商品&timestamp=1755561600&key=your-merchant-key
 ```
 
-**PHP 示例**：
+MD5 转大写 = `4340BBCF38A2296A064AE850D0F4EB6F`
 
-```php
-$params = [
-    'merchantNo' => 'YOUR_MERCHANT_NO',
-    'outTradeNo' => 'ORDER' . time(),
-    'amount' => '10.00',
-    'subject' => '测试商品',
-    'payType' => 'wxpay',
-    'timestamp' => time()
-];
+#### 第二套（易支付 `*.php`）
 
-ksort($params);
-$signStr = '';
-foreach ($params as $k => $v) {
-    if ($v !== '' && $v !== null) {
-        $signStr .= $k . '=' . $v . '&';
-    }
-}
-$signStr .= 'key=' . 'YOUR_API_SECRET';
-$sign = strtoupper(md5($signStr));
+排序 → 去掉 `sign`/`sign_type`/空值 → 拼 `a=1&b=2` → 末尾**直接拼密钥** → MD5 → **转小写**
+
 ```
+money=10.00&name=测试商品&notify_url=https://your-site.com/pay/notify&out_trade_no=ORDER20260819001&pid=M17390000123400&return_url=https://your-site.com/pay/result&type=wxpayyour-merchant-key
+```
+
+MD5 转小写 = `44175b98b2b0f726a31a31a1414e8116`
+
+> 上面两个签名值都是真的，可以自己 `printf '%s' '……' | md5sum` 验一遍。PHP / Java / Python 三种语言的现成实现见 [docs/API.md 第八章](docs/API.md#八两套签名算法千万别拿混)。
 
 ### 回调通知
 
-支付成功后，系统会向商户配置的 `notifyUrl` 发送 POST 请求。
+支付成功后，平台按**订单来源**决定用哪套格式通知你：
 
-**回调参数**：
+| 下单走的接口 | 回调方式 | 回调参数 | 签名 |
+|---|---|---|---|
+| `/api/pay/*` | **POST** 表单 | `merchantNo`、`orderNo`、`outTradeNo`、`amount`、`payAmount`、`payType`、`status`、`payTime`、`timestamp`、`extParam`、`sign` | 原生（大写） |
+| `*.php` | **GET** 查询串 | `pid`、`trade_no`、`out_trade_no`、`type`、`name`、`money`、`trade_status`、`sign`、`sign_type` | 易支付（小写） |
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| merchantNo | String | 商户编号 |
-| orderNo | String | 平台订单号 |
-| outTradeNo | String | 商户订单号 |
-| amount | String | 订单金额 |
-| payAmount | String | 实付金额 |
-| payType | String | 支付类型 |
-| status | Integer | 订单状态：1-已支付 |
-| payTime | String | 支付时间 |
-| extParam | String | 扩展参数 |
-| sign | String | 签名 |
+**不管哪套，你都必须返回字符串 `success`**，否则平台会重试：最多 5 次，间隔 1 / 2 / 4 / 8 / 16 分钟，5 次用完要人工在后台点「重发通知」。
 
-**注意事项**：
-- 商户需验证签名后返回 `success` 字符串
-- 如未返回 `success`，系统会重试通知（最多 5 次，递增间隔）
+**⚠️ 回调可能重复发送，你的处理必须做到「重复收到同一笔也不会出错」** —— 先查自己库里这单的状态，已处理过就直接回 `success`，只有未处理时才发货。不然重试机制会让你重复发货。
+
+带验签、防重复、核对金额的完整 PHP 示例见 [docs/API.md 第五章](docs/API.md#五回调通知平台--你的系统)。
 
 ---
 
@@ -619,33 +641,72 @@ $sign = strtoupper(md5($signStr));
 
 > ⚠️ **本期不支持退款**：请在 sub2api 后台把 `refund_enabled` / `allow_user_refund` 关掉，用户端就不会出现退款入口，`refund` 也不会被调用。上面那个兜底只是防对方版本忽略配置照发。
 
-### 支付类型（type）
+### 下单参数（`submit.php` / `mapi.php` 通用）
 
-现在支持两种，值和平台内部的 `payType` 一致：
+| 字段 | 必填 | 类型 | 说明 | 示例 |
+|---|---|---|---|---|
+| `pid` | 是 | String | 商户号，**就是平台的商户编号 `merchantNo`**，不用另外申请 | `M17390000123400` |
+| `type` | 是 | String | 支付方式：`wxpay`=微信，`alipay`=支付宝 | `wxpay` |
+| `out_trade_no` | 是 | String | 对方系统的订单号，同一商户下不能重复 | `ORDER20260819001` |
+| `money` | 是 | String | 金额（元），必须大于 0 | `10.00` |
+| `name` | 是 | String | 商品名称 | `测试商品` |
+| `notify_url` | 否 | String | **异步回调地址**，每笔单独指定；不传就用商户的默认配置 | `https://your-site.com/pay/notify` |
+| `return_url` | 否 | String | **同步跳转地址**，用户付完款浏览器跳这里 | `https://your-site.com/pay/result` |
+| `sign` | 是 | String | 签名，**32 位小写** | `44175b98…` |
+| `sign_type` | 否 | String | 固定 `MD5`，**不参与签名计算** | `MD5` |
 
-- `alipay` —— 支付宝
-- `wxpay` —— 微信
+> **不需要传店铺号**：易支付协议里没有「店铺」概念，平台会在该商户名下所有店铺里自动挑一张可用收款码。
+>
+> **对方系统额外带的参数（`clientip`、`device` 等）平台不使用，但它们必须参与签名** —— 「收到什么就签什么」，别自己挑字段。
+
+`mapi.php` 成功返回：
+
+```json
+{"code":1,"msg":"success","trade_no":"FP20260819120000123456","payurl":"http://.../pay/FP20260819120000123456","qrcode":"weixin://wxpay/bizpayurl?pr=xxxxxxxx"}
+```
+
+**`code=1` 才是成功**（易支付协议的约定），失败是 `{"code":-1,"msg":"失败原因"}`，HTTP 状态码都是 200。
+`submit.php` 成功是 **302 跳转**，失败是 **HTTP 400 + 纯文本** `下单失败：xxx` —— 两个接口的失败返回格式不一样，别套用同一套解析。
+
+完整字段说明、全部错误文案、查询接口参数见 **[docs/API.md 第四章](docs/API.md#四彩虹易支付协议接口-php)**。
 
 ### 回调通知（`notify_url`）
 
-用户付款成功后，平台会**按易支付协议格式**（GET，带 `pid` / `trade_no` / `out_trade_no` / `type` / `money` / `trade_status=TRADE_SUCCESS` / `sign` / `sign_type=MD5`）请求你在下单时填的 `notify_url`。你的系统收到后，回一个字符串 `success` 就算完成。
+用户付款成功后，平台会**按易支付协议格式**请求你在下单时填的 `notify_url`：
 
-签名怎么算见下一节。老的 `/api/pay/*` 接口下单的老订单**回调格式完全没变**，还是 POST，不受影响。
+```
+GET https://your-site.com/pay/notify?money=10.00&name=%E6%B5%8B%E8%AF%95%E5%95%86%E5%93%81&out_trade_no=ORDER20260819001&pid=M17390000123400&sign=98eb26dd531b12d5ccb20339145de5ba&sign_type=MD5&trade_no=FP20260819120000123456&trade_status=TRADE_SUCCESS&type=wxpay
+```
+
+验签通过后，回一个字符串 `success` 就算完成。**收不到 `success` 平台会重试，最多 5 次，间隔 1/2/4/8/16 分钟。**
+
+**⚠️ 回调可能重复送达，你的处理必须幂等**（同一笔重复收到不能重复发货）：先查自己库里的状态，已处理过就直接回 `success`。
+
+老的 `/api/pay/*` 接口下单的老订单**回调格式完全没变**，还是 POST，不受影响 —— 靠订单表里的 `order_source` 字段区分，见上面的[支付流程](#支付流程)。
+
+带验签、防重复、核对金额的完整 PHP 示例见 [docs/API.md 5.2](docs/API.md#52-易支付格式的回调get)。
 
 ### 签名算法（**和平台原生的不一样，别拿混了**）
 
 彩虹易支付通用协议的签名：
 
 1. 参数按名字 **ASCII 升序**排
-2. 拼成 `a=1&b=2&c=3` 这种形式（**不做 URL 编码**）
-3. 去掉 `sign`、`sign_type`，去掉空值参数
+2. 去掉 `sign`、`sign_type`，去掉空值参数
+3. 拼成 `a=1&b=2&c=3` 这种形式（**不做 URL 编码**）
 4. 末尾**直接拼商户密钥**（注意：**不是** `&key=密钥`）
 5. MD5 后转**小写**
 
-例：参数 `{pid: "M001", out_trade_no: "T1", money: "1.00"}`，密钥 `abc`：
-拼串是 `money=1.00&out_trade_no=T1&pid=M001abc`，MD5 得到的 32 位小写就是签名。
+**能照着抄的完整例子** —— 商户号 `M17390000123400`、密钥 `your-merchant-key`：
 
-对照代码：`fastpay-server/src/main/java/com/fastpay/util/EpaySignUtil.java`。
+```
+money=10.00&name=测试商品&notify_url=https://your-site.com/pay/notify&out_trade_no=ORDER20260819001&pid=M17390000123400&return_url=https://your-site.com/pay/result&type=wxpayyour-merchant-key
+```
+
+MD5 转小写 = `44175b98b2b0f726a31a31a1414e8116`（这个值是真的，可以自己 `printf '%s' '……' | md5sum` 验一遍）
+
+> **⚠️ 和平台原生签名的三个区别**：原生末尾拼 `&key=密钥`、结果转**大写**、不排除 `sign_type` 和空值。**混用必定验签失败，而且肉眼对比签名串看不出问题在哪。**
+
+对照代码：`fastpay-server/src/main/java/com/fastpay/util/EpaySignUtil.java`。PHP / Java / Python 现成实现见 [docs/API.md 8.2](docs/API.md#82-第二套彩虹易支付签名算法)。
 
 ### 关于路径前缀
 
@@ -668,12 +729,12 @@ location ~ ^/(submit|mapi|api)\.php$ {
 ### 快速自测（curl）
 
 ```bash
-# 假设商户号 M001、密钥 abc，参数 money=1.00、out_trade_no=T1
-# 签名字符串：money=1.00&name=测试&notify_url=http://your.callback/notify&out_trade_no=T1&pid=M001&type=alipayabc
-# 用 echo -n | md5sum 算出 32 位小写签名后：
+# 1) 算签名（末尾直接拼密钥，结果保持小写）
+printf '%s' 'money=1.00&name=测试&notify_url=http://your.callback/notify&out_trade_no=T1&pid=你的商户号&type=alipay你的APISecret' | md5sum
 
+# 2) 下单
 curl -X POST http://localhost:7001/fastpay-server/mapi.php \
-  -d 'pid=M001' \
+  -d 'pid=你的商户号' \
   -d 'type=alipay' \
   -d 'out_trade_no=T1' \
   -d 'name=测试' \
@@ -681,9 +742,15 @@ curl -X POST http://localhost:7001/fastpay-server/mapi.php \
   -d 'notify_url=http://your.callback/notify' \
   -d 'sign_type=MD5' \
   -d 'sign=<上面算出来的签名>'
+
+# 3) 查订单（这一步的签名只含 out_trade_no 和 pid，act 和 key 都不参与签名）
+printf '%s' 'out_trade_no=T1&pid=你的商户号你的APISecret' | md5sum
+curl 'http://localhost:7001/fastpay-server/api.php?act=order&pid=你的商户号&out_trade_no=T1&sign=<刚算的签名>&sign_type=MD5'
 ```
 
-返回 `{"code":1, "msg":"success", "trade_no":"...", "payurl":"...", "qrcode":"..."}` 表示对通了。
+第 2 步返回 `{"code":1, "msg":"success", "trade_no":"...", "payurl":"...", "qrcode":"..."}` 表示对通了。
+
+👉 从零接入的完整步骤（拿密钥 → 配收款码 → 配回调 → 发第一笔 → 处理回调 → 上线自查清单）见 **[docs/API.md 第十章](docs/API.md#十从零接入照着做就行)**；签名验不过、回调收不到怎么排查见 **[第十一章](docs/API.md#十一出问题了怎么查)**。
 
 ---
 
@@ -810,15 +877,18 @@ server {
 
 | 文档 | 说明 |
 |------|------|
+| **[开发对接文档](docs/API.md)** | **接了这个系统就看这份**：两套接口的全部参数、返回字段、错误码、两套签名算法、支付流程图、从零接入指引、排查手册 |
 | [项目说明文档](docs/PROJECT.md) | 系统架构、技术栈、数据库设计、安全设计 |
-| [使用说明文档](docs/USER_GUIDE.md) | 安装部署、功能使用、API 对接指南 |
+| [使用说明文档](docs/USER_GUIDE.md) | 安装部署、后台怎么用、生产部署 |
 | [Demo 说明文档](docs/DEMO.md) | 对接演示项目详细说明 |
+| [部署说明](docs/DEPLOY.md) | 线上环境怎么发版、怎么回退、出问题怎么查 |
+| [敏感信息怎么处理](docs/SECRETS.md) | **提交前必读**：什么能写进这个公开仓库、什么绝对不能、密码密钥该放哪 |
 
 ---
 
 ## 开发者
 
-**大熊 Bigbear**
+**xiaomo37564459**
 
 ## 许可证
 

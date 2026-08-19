@@ -65,4 +65,4 @@ src/main/resources/
 
 ## 技术支持
 
-- **开发者**：大熊 Bigbear
+- **开发者**：xiaomo37564459

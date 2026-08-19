@@ -9,7 +9,7 @@ import java.util.Set;
  * 强度不高但足够挡住"123456 / admin / password"这类人尽皆知的口令。
  * 规则很短是故意的：写在这里就是要让前端提示和后端拦截口径完全一致。
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public final class PasswordPolicy {
 

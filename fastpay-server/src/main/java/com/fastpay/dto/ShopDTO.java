@@ -7,7 +7,7 @@ import lombok.Data;
 /**
  * 店铺信息 DTO
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class ShopDTO {

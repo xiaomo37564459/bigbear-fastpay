@@ -9,7 +9,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * Web 配置类
  * 配置跨域、拦截器等
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Configuration
 public class WebConfig implements WebMvcConfigurer {

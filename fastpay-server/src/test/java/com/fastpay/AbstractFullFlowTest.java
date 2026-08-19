@@ -368,8 +368,9 @@ abstract class AbstractFullFlowTest {
     }
 
     // ============================================================
-    // 以下 step14 ~ step18 覆盖 MTM-170：pay_amount 微调 + 撞单认对人 + 幂等 + 未匹配落表 +
-    // 易支付 money 回传原始 amount。都放在 step13 之后，避免动 step6/step8 的既有断言口径
+    // 以下 step14 ~ step20 覆盖 MTM-170：pay_amount 微调 + 撞单认对人 + 幂等 + 未匹配落表 +
+    // 易支付 money 回传原始 amount + release 契约 + 迁移脚本行为
+    // 都放在 step13 之后，避免动 step6/step8 的既有断言口径
     // ============================================================
 
     @Test

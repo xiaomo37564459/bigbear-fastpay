@@ -17,7 +17,7 @@ import java.util.Map;
  * 统计 SQL 全部改写成 MySQL / PostgreSQL 都认的写法（CAST(... AS DATE)、CURRENT_DATE、COALESCE），
  * 不再用 MySQL 专用的 CURDATE()/IFNULL()/DATE_SUB()，两个数据库共用同一套 SQL。
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Mapper
 public interface PayOrderMapper extends BaseMapper<PayOrder> {

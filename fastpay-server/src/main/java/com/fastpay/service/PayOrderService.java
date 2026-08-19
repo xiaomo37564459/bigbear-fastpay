@@ -10,7 +10,7 @@ import com.fastpay.vo.PayResultVO;
 /**
  * 支付订单服务接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public interface PayOrderService extends IService<PayOrder> {
 

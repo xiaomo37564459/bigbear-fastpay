@@ -1,0 +1,79 @@
+# 统一换行符与文件类型识别
+# 目的：不管开发者用 Windows 还是 Mac/Linux，仓库里存进去的文本文件永远是 LF
+#      避免出现「只改几行却整个文件都变了」这种因为换行符差异带来的假 diff
+#
+# 说明：
+# - text=auto  让 Git 自己判断哪些是文本文件
+# - eol=lf     所有文本文件在仓库里统一存成 LF；Windows 上 checkout 时
+#              是否再转成 CRLF 由本地 core.autocrlf 决定，跟仓库无关
+
+* text=auto eol=lf
+
+# ==================== 文本文件 ====================
+*.java     text
+*.kt       text
+*.groovy   text
+*.scala    text
+*.vue      text
+*.js       text
+*.jsx      text
+*.ts       text
+*.tsx      text
+*.mjs      text
+*.cjs      text
+*.html     text
+*.htm      text
+*.css      text
+*.scss     text
+*.sass     text
+*.less     text
+*.xml      text
+*.json     text
+*.yml      text
+*.yaml     text
+*.toml     text
+*.md       text
+*.txt      text
+*.sql      text
+*.properties text
+*.conf     text
+*.env      text
+*.env.example text
+*.service  text
+
+# Shell 脚本必须是 LF（Linux 上带 CRLF 的脚本跑不起来）
+*.sh       text eol=lf
+
+# Windows 批处理必须是 CRLF
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+
+# ==================== 二进制文件 ====================
+# 声明为 binary：不做换行符转换、不参与 diff
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.bmp      binary
+*.ico      binary
+*.webp     binary
+*.woff     binary
+*.woff2    binary
+*.ttf      binary
+*.otf      binary
+*.eot      binary
+*.pdf      binary
+*.zip      binary
+*.tar      binary
+*.gz       binary
+*.tgz      binary
+*.7z       binary
+*.rar      binary
+*.jar      binary
+*.war      binary
+*.ear      binary
+*.class    binary
+*.exe      binary
+*.dll      binary
+*.so       binary
+*.dylib    binary
