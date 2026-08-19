@@ -106,6 +106,18 @@ public class PayOrder implements Serializable {
     private LocalDateTime lastNotifyTime;
 
     /**
+     * 最近一次回调商户返回的内容（截断到 1000 字符）。
+     * 成功回调时写入，失败回调时清空为 null。
+     */
+    private String notifyResult;
+
+    /**
+     * 最近一次回调失败的错误信息（异常类名 + message，截断到 500 字符）。
+     * 成功回调时清空为 null，失败回调时写入。
+     */
+    private String notifyError;
+
+    /**
      * 支付时间
      */
     private LocalDateTime payTime;

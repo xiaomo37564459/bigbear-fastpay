@@ -49,7 +49,7 @@ public class MerchantOrderController {
     @Operation(summary = "订单详情", description = "根据订单号获取订单详情")
     @GetMapping("/{orderNo}")
     public Result<PayOrder> getByOrderNo(@PathVariable String orderNo) {
-        PayOrder order = payOrderService.queryOrder(orderNo);
+        PayOrder order = payOrderService.getOrderDetail(orderNo);
         return Result.success(order);
     }
 
