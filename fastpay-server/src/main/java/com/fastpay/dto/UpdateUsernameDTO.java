@@ -7,7 +7,7 @@ import lombok.Data;
 /**
  * 修改登录账号请求 DTO
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class UpdateUsernameDTO {

@@ -32,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * merchantNo 为商户编号
  * outTradeNo 为商户的商品订单号
  * 
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Component

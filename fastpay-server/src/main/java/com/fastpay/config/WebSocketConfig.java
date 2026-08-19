@@ -8,7 +8,7 @@ import org.springframework.web.socket.server.standard.ServerEndpointExporter;
  * WebSocket 配置类
  * 用于支付结果页面实时通知
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Configuration
 public class WebSocketConfig {

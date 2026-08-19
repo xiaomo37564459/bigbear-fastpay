@@ -6,7 +6,7 @@ import lombok.Data;
  * 支付通知DTO
  * 用于接收监听软件推送的支付通知
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class PayNotifyDTO {

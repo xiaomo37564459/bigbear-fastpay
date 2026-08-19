@@ -32,7 +32,7 @@ import java.util.List;
 /**
  * 商户服务实现类
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Service
@@ -275,9 +275,5 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
         merchant.setNotifyUrl(notifyUrl);
         merchant.setReturnUrl(returnUrl);
         this.updateById(merchant);
-    }
-
-    public static void main(String[] args) {
-        System.out.println(SecureUtil.md5("nanyiba@fastpayQaz330600"));
     }
 }

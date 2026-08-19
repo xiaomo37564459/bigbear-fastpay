@@ -10,7 +10,7 @@ import java.util.List;
  * 用于返回分页查询的数据
  *
  * @param <T> 数据类型
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class PageResult<T> implements Serializable {

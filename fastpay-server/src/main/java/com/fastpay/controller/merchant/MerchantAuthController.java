@@ -19,7 +19,7 @@ import java.util.Map;
 /**
  * 商户平台 - 认证控制器
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "商户平台-认证", description = "商户登录、信息、配置等接口")
 @RestController

@@ -16,7 +16,7 @@ import java.util.Map;
  * JWT 工具类
  * 用于生成和验证 JWT Token
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Component
 public class JwtUtil {

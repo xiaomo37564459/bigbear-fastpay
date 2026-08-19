@@ -9,7 +9,7 @@ import lombok.Data;
  * 后端顺手签一个和新令牌版本对齐的 token 交给前端替换掉本地缓存。
  * 前端若判断这是"改密码"场景，也可以主动清掉 token 并跳登录页（本次交付的做法）。
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class UpdateCredentialVO {

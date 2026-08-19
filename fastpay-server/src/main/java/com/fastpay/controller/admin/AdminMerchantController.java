@@ -18,7 +18,7 @@ import java.util.List;
  * 管理后台 - 商户管理控制器
  * 处理商户的增删改查等操作
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "管理后台-商户管理", description = "商户的增删改查等操作")
 @RestController

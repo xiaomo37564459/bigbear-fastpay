@@ -6,7 +6,7 @@ import lombok.Data;
 /**
  * 收款二维码 DTO
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class PayQrcodeDTO {

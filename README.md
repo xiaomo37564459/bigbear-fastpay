@@ -9,11 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/X-TQ/bigbear-fastpay">
+  <a href="https://github.com/xiaomo37564459/bigbear-fastpay">
     <img src="https://img.shields.io/badge/GitHub-bigbear--fastpay-blue?logo=github" alt="GitHub">
-  </a>
-  <a href="https://gitee.com/nchfly/bigbear-fastpay">
-    <img src="https://img.shields.io/badge/Gitee-bigbear--fastpay-red?logo=gitee" alt="Gitee">
   </a>
 </p>
 
@@ -43,13 +40,12 @@ FAST 易支付是一款面向个人开发者和小型商户的**免签支付平�
 
 ## 在线演示
 
-| 系统 | 演示地址 | 账号密码 |
-|------|----------|----------|
-| 🏪 **商户平台** | [http://121.4.28.146/fastpay-merchant/](http://121.4.28.146/fastpay-merchant/) | `demo` / `123456` |
-| 🔧 **管理后台** | [http://121.4.28.146/fastpay-admin/](http://121.4.28.146/fastpay-admin/) | - |
-| 🧪 **对接演示** | [http://121.4.28.146:7002/](http://121.4.28.146:7002/) | - |
+| 系统 | 演示地址 |
+|------|----------|
+| 🏪 **商户平台** | [https://pay.copliot.cloud/fastpay-merchant/](https://pay.copliot.cloud/fastpay-merchant/) |
+| 🔧 **管理后台** | [https://pay.copliot.cloud/fastpay-admin/](https://pay.copliot.cloud/fastpay-admin/) |
 
-> 💡 演示环境仅供体验，请勿用于生产环境
+> 💡 演示环境仅供体验，请勿用于生产环境。演示账号请联系管理员申请。
 
 ## 功能特性
 
@@ -421,12 +417,7 @@ bigbear-fastpay/
 ### 1. 克隆项目
 
 ```bash
-# GitHub
-git clone https://github.com/X-TQ/bigbear-fastpay.git
-
-# Gitee（国内镜像）
-git clone https://gitee.com/nchfly/bigbear-fastpay.git
-
+git clone https://github.com/xiaomo37564459/bigbear-fastpay.git
 cd bigbear-fastpay
 ```
 
@@ -456,7 +447,10 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 服务地址：http://localhost:7001/fastpay-server
 
-**默认管理员账号**：`fastpay` / `123456@`
+**首次启动的管理员账号**：
+- 用户名默认 `admin`，可用环境变量 `FASTPAY_ADMIN_INITIAL_USERNAME` 覆盖
+- 密码不设默认值，服务首次启动时随机生成一次 16 位密码，明文只写到 `warn` 级别日志里一次；生产环境请从启动日志里拿到后立刻改
+- 想在本地开发指定固定密码，用环境变量 `FASTPAY_ADMIN_INITIAL_PASSWORD=...` 启动
 
 ### 4. 启动管理后台
 
@@ -887,12 +881,14 @@ server {
 | [项目说明文档](docs/PROJECT.md) | 系统架构、技术栈、数据库设计、安全设计 |
 | [使用说明文档](docs/USER_GUIDE.md) | 安装部署、后台怎么用、生产部署 |
 | [Demo 说明文档](docs/DEMO.md) | 对接演示项目详细说明 |
+| [部署说明](docs/DEPLOY.md) | 线上环境怎么发版、怎么回退、出问题怎么查 |
+| [敏感信息怎么处理](docs/SECRETS.md) | **提交前必读**：什么能写进这个公开仓库、什么绝对不能、密码密钥该放哪 |
 
 ---
 
 ## 开发者
 
-**大熊 Bigbear**
+**xiaomo37564459**
 
 ## 许可证
 

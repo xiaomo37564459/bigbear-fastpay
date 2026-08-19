@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * 回调通知重试定时任务
  * 自动重发失败的回调通知
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Component

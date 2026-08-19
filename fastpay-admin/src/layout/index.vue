@@ -62,7 +62,7 @@
 
       <!-- 作者信息 -->
       <div class="sidebar-footer" v-if="!collapsed">
-        <span class="author-text">by 大熊Bigbear</span>
+        <span class="author-text">by xiaomo37564459</span>
       </div>
     </aside>
 

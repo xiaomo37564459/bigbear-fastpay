@@ -18,7 +18,7 @@ import java.util.List;
 /**
  * 商户通道服务实现类
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Service
