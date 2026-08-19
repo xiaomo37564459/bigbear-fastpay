@@ -114,7 +114,7 @@ FAST 易支付是一款**个人免签支付平台**，专注于为个人开发�
 ### 3.1 目录结构
 
 ```
-bigbear-pay/
+bigbear-fastpay/
 ├── docs/                        # 项目文档
 │   ├── PROJECT.md              # 项目说明文档
 │   ├── USER_GUIDE.md           # 使用说明文档
@@ -458,7 +458,7 @@ bigbear-pay/
 
 ## 十一、开发团队
 
-**大熊 Bigbear**
+**xiaomo37564459**
 
 ---
 

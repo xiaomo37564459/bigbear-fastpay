@@ -13,7 +13,7 @@ import java.util.concurrent.ThreadPoolExecutor;
  * 异步线程池配置
  * 根据服务器CPU和内存资源配置合适的线程池参数
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Configuration

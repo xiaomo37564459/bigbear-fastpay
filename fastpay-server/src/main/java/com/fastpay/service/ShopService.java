@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * 店铺服务接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public interface ShopService extends IService<Shop> {
 

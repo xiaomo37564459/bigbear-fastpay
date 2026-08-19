@@ -9,7 +9,7 @@ import java.io.Serializable;
  * 用于规范API接口的返回格式
  *
  * @param <T> 响应数据类型
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class Result<T> implements Serializable {

@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Mapper;
 /**
  * 收款二维码 Mapper 接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Mapper
 public interface PayQrcodeMapper extends BaseMapper<PayQrcode> {

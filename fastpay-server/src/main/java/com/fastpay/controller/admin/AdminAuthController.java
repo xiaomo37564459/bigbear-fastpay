@@ -23,7 +23,7 @@ import java.util.Map;
  * 管理后台 - 认证控制器
  * 处理管理员登录、控制台数据、账号设置等
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "管理后台-认证", description = "管理员登录、控制台数据、账号设置等接口")
 @RestController

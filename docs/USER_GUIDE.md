@@ -16,8 +16,8 @@
 #### 步骤一：克隆项目
 
 ```bash
-git clone https://github.com/your-repo/bigbear-pay.git
-cd bigbear-pay
+git clone https://github.com/xiaomo37564459/bigbear-fastpay.git
+cd bigbear-fastpay
 ```
 
 #### 步骤二：初始化数据库
@@ -303,7 +303,7 @@ npm run dev
 
 ```html
 <form action="https://your-domain/api/pay/submit" method="POST">
-  <input type="hidden" name="merchantNo" value="M230117997677">
+  <input type="hidden" name="merchantNo" value="M12345678">
   <input type="hidden" name="outTradeNo" value="ORDER202512050001">
   <input type="hidden" name="amount" value="10.00">
   <input type="hidden" name="subject" value="测试商品">
@@ -327,7 +327,7 @@ npm run dev
 
 ```json
 {
-  "merchantNo": "M230117997677",
+  "merchantNo": "M12345678",
   "outTradeNo": "ORDER202512050001",
   "amount": "10.00",
   "subject": "测试商品",
@@ -684,5 +684,5 @@ nohup java -jar fastpay-server-1.0.0.jar --spring.profiles.active=prod > /dev/nu
 
 如有问题，请联系：
 
-- **开发者**：大熊 Bigbear
-- **项目地址**：https://github.com/your-repo/bigbear-pay
+- **开发者**：xiaomo37564459
+- **项目地址**：https://github.com/xiaomo37564459/bigbear-fastpay

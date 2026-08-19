@@ -29,12 +29,14 @@ export default defineConfig({
     port: 3002,
     strictPort: true,
     proxy: {
+      // 联调时用环境变量指定后端地址：VITE_API_PROXY=http://localhost:7001 或线上 https://pay.copliot.cloud
+      // 默认指向本机，避免把请求打到不该打的地方
       '/fastpay-server': {
-        target: 'http://121.4.28.146:80',
+        target: process.env.VITE_API_PROXY || 'http://localhost:7001',
         changeOrigin: true
       },
       '/fastpay-server/ws': {
-        target: 'ws://121.4.28.146:80',
+        target: process.env.VITE_WS_PROXY || 'ws://localhost:7001',
         ws: true,
         changeOrigin: true
       }

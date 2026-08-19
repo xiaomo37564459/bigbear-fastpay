@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * 店铺实体类
  * 商户可以创建多个店铺，每个店铺维护自己的收款二维码
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 @TableName("fp_shop")

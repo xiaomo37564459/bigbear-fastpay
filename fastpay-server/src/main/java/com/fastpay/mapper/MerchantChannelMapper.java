@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Mapper;
 /**
  * 商户通道 Mapper 接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Mapper
 public interface MerchantChannelMapper extends BaseMapper<MerchantChannel> {

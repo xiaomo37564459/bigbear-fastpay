@@ -7,7 +7,7 @@ import java.math.BigDecimal;
 /**
  * 支付结果 VO
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class PayResultVO {

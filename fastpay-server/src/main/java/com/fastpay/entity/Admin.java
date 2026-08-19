@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
  * 管理员实体类
  * 存储系统管理员账号信息
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 @TableName("fp_admin")

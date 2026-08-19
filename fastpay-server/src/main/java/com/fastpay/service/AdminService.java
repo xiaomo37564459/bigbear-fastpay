@@ -13,7 +13,7 @@ import com.fastpay.vo.UpdateCredentialVO;
 /**
  * 管理员服务接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public interface AdminService extends IService<Admin> {
 

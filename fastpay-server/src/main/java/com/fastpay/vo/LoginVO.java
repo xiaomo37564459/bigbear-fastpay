@@ -5,7 +5,7 @@ import lombok.Data;
 /**
  * 登录响应 VO
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class LoginVO {
