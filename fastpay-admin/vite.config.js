@@ -28,8 +28,9 @@ export default defineConfig({
     port: 3001,
     strictPort: true,
     proxy: {
+      // 后端地址默认走线上（可直接联调）；本机跑后端做自测时设置 VITE_API_PROXY=http://localhost:7001
       '/fastpay-server': {
-        target: 'http://121.4.28.146:80',
+        target: process.env.VITE_API_PROXY || 'http://121.4.28.146:80',
         changeOrigin: true
       }
     }

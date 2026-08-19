@@ -68,10 +68,11 @@ fastpay:
     # Token 有效期（小时）
     expire-hours: 12
   
-  # 管理员默认账号
+  # 管理员初始账号（仅在数据库里没有管理员时用一次，用于本地开发和自动化测试）
+  # 生产环境的对应项在 application-prod.yml 里，故意不配置密码，让 InitConfig 随机生成
   admin:
-    username: fastpay
-    password: 123456@
+    username: admin
+    password: "123456"
   
   # 支付配置
   pay:

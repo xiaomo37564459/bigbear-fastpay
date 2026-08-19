@@ -35,7 +35,7 @@ public class JwtUtil {
     }
 
     /**
-     * 生成 Token
+     * 生成 Token（不带令牌版本号，用于商户等暂时没有令牌失效需求的场景）
      *
      * @param userId   用户ID
      * @param username 用户名
@@ -43,10 +43,28 @@ public class JwtUtil {
      * @return JWT Token
      */
     public String generateToken(Long userId, String username, String userType) {
+        return generateToken(userId, username, userType, null);
+    }
+
+    /**
+     * 生成 Token（带令牌版本号）。
+     * 管理员改密码/改账号后 tokenVersion 会 +1，AuthInterceptor 会拿它跟库里的 token_version 比对，
+     * 不一致就直接判 token 失效。传 null 表示这个 token 不参与版本校验（比如商户端）。
+     *
+     * @param userId       用户ID
+     * @param username     用户名
+     * @param userType     用户类型（admin/merchant）
+     * @param tokenVersion 令牌版本号，可为 null
+     * @return JWT Token
+     */
+    public String generateToken(Long userId, String username, String userType, Integer tokenVersion) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", userId);
         claims.put("username", username);
         claims.put("userType", userType);
+        if (tokenVersion != null) {
+            claims.put("tokenVersion", tokenVersion);
+        }
 
         Date now = new Date();
         Date expiration = new Date(now.getTime() + expireHours * 60 * 60 * 1000L);
@@ -123,5 +141,18 @@ public class JwtUtil {
             return null;
         }
         return claims.get("userType", String.class);
+    }
+
+    /**
+     * 从 Token 中获取令牌版本号。
+     * 老 token（升级前签发的）里没有这个字段，返回 null；
+     * 调用方要把 null 当作 0 处理，保证升级过程不会把在线用户强制踢下线。
+     */
+    public Integer getTokenVersion(String token) {
+        Claims claims = parseToken(token);
+        if (claims == null) {
+            return null;
+        }
+        return claims.get("tokenVersion", Integer.class);
     }
 }

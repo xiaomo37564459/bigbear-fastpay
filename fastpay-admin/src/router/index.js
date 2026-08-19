@@ -44,6 +44,13 @@ const routes = [
         name: 'Order',
         component: () => import('@/views/order/index.vue'),
         meta: { title: '订单管理', icon: 'OrderedListOutlined' }
+      },
+      {
+        // 账号设置：改自己的登录账号和密码，从右上角头像菜单进入，不在左侧主菜单里
+        path: 'profile',
+        name: 'Profile',
+        component: () => import('@/views/profile/index.vue'),
+        meta: { title: '账号设置' }
       }
     ]
   }

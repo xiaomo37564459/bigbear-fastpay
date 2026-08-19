@@ -24,7 +24,7 @@ rebel.xml
 node_modules
 dist
 
-# 前端构建时自动生成的类型声明，不用进仓库
+# unplugin-auto-import / unplugin-vue-components 自动生成的类型声明，跟机器有关，不该进仓库
 auto-imports.d.ts
 components.d.ts
 
