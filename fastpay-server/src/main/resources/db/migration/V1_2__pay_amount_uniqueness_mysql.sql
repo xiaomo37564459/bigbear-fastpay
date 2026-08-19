@@ -10,8 +10,12 @@
 --   2. 新增 fp_unmatched_notify 表 —— 未匹配收款通知
 --      "钱到了但认不到订单"的记录，管理后台能查询、人工处理
 --   3. 补齐历史订单的 pay_amount：把 status=0 且 pay_amount IS NULL 的老订单
---      pay_amount 补成 amount，避免上线切换到"按 pay_amount 匹配"后老订单永远匹配不到
---   4. 关掉可能有 pay_amount 撞车的老 UNPAID 订单（可选，防止上线一瞬间的匹配错乱）
+--      pay_amount 补成 amount，避免上线切换到"按 pay_amount 匹配"后老订单永远匹配不到；
+--      已支付的老订单顺手补齐，历史对账口径统一
+--   4. 老 UNPAID 订单冲突消解 + 塞进占位表：同一 (merchant_id, pay_type, pay_amount) 组下
+--      若有多笔老 UNPAID，只保留最早创建的那笔，其余直接关掉（避免上线一瞬间就复发撞单）；
+--      被保留的那笔再插入占位表 fp_pending_pay_amount，让上线后新订单会自动避开这些金额
+--      （不然升级后的短暂窗口里，新订单查占位表"金额没人占"→ 又拿到老单同金额 → bug 复发）
 --
 -- 生产库怎么跑（在部署新版 jar、重启后端之前执行）：
 --   mysql -h <host> -P 3306 -u <user> -p bigbear_fastpay < V1_2__pay_amount_uniqueness_mysql.sql
@@ -60,7 +64,30 @@ UPDATE fp_pay_order
 SET pay_amount = amount
 WHERE status = 0 AND pay_amount IS NULL;
 
--- 4. 已支付订单如果 pay_amount 是 NULL，也顺手补一下，让历史对账口径统一
+-- 3b. 已支付订单如果 pay_amount 是 NULL，也顺手补一下，历史对账口径统一
 UPDATE fp_pay_order
 SET pay_amount = amount
 WHERE status = 1 AND pay_amount IS NULL;
+
+-- 4a. 老 UNPAID 订单里如果同一 (merchant_id, pay_type, pay_amount) 有多笔（就是历史遗留的撞单），
+-- 只保留最早创建的那笔（id 最小），其余直接关掉：status = 3（已关闭）
+-- 说明：MySQL 不允许 UPDATE 的 WHERE 里 SELECT 同一张表，用 "SELECT 套一层" 骗过语法限制
+UPDATE fp_pay_order
+SET status = 3
+WHERE status = 0
+  AND id NOT IN (
+      SELECT keep_id FROM (
+          SELECT MIN(id) AS keep_id
+          FROM fp_pay_order
+          WHERE status = 0
+          GROUP BY merchant_id, pay_type, pay_amount
+      ) AS keepers
+  );
+
+-- 4b. 把剩下的老 UNPAID 订单塞进占位表，让新版后端一启动就能看见"这些金额已被老单占着"，
+-- 从而给新订单自动微调避开。ON DUPLICATE KEY 兜底防止本脚本被重复执行时报错
+INSERT INTO fp_pending_pay_amount (merchant_id, pay_type, pay_amount, order_no, expire_time)
+SELECT merchant_id, pay_type, pay_amount, order_no, expire_time
+FROM fp_pay_order
+WHERE status = 0
+ON DUPLICATE KEY UPDATE order_no = VALUES(order_no);

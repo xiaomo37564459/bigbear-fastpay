@@ -64,4 +64,27 @@ class MySqlFullFlowTest extends AbstractFullFlowTest {
         registry.add("spring.datasource.username", () -> "root");
         registry.add("spring.datasource.password", () -> "");
     }
+
+    @Override
+    protected String migrationCloseConflictingUnpaidSql() {
+        // MySQL 不能在 UPDATE 里 SELECT 同一张表，用 "SELECT 套一层" 骗过语法限制
+        return "UPDATE fp_pay_order SET status = 3 " +
+                "WHERE status = 0 " +
+                "  AND id NOT IN (" +
+                "      SELECT keep_id FROM (" +
+                "          SELECT MIN(id) AS keep_id " +
+                "          FROM fp_pay_order " +
+                "          WHERE status = 0 " +
+                "          GROUP BY merchant_id, pay_type, pay_amount" +
+                "      ) AS keepers" +
+                "  )";
+    }
+
+    @Override
+    protected String migrationInsertLegacyPendingSql() {
+        return "INSERT INTO fp_pending_pay_amount (merchant_id, pay_type, pay_amount, order_no, expire_time) " +
+                "SELECT merchant_id, pay_type, pay_amount, order_no, expire_time " +
+                "FROM fp_pay_order WHERE status = 0 " +
+                "ON DUPLICATE KEY UPDATE order_no = VALUES(order_no)";
+    }
 }

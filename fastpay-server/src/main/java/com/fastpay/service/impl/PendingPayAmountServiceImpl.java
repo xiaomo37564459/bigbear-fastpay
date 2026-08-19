@@ -8,6 +8,7 @@ import com.fastpay.service.PendingPayAmountService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -68,15 +69,23 @@ public class PendingPayAmountServiceImpl implements PendingPayAmountService {
 
     @Override
     @Transactional
-    public void release(Long merchantId, String payType, BigDecimal payAmount) {
+    public void release(Long merchantId, String payType, BigDecimal payAmount, String orderNo) {
         if (payAmount == null) {
+            return;
+        }
+        if (!StringUtils.hasText(orderNo)) {
+            // 没订单号就无脑按金额删是危险的：并发下会误删刚抢到同金额的新订单占位。
+            // 现在所有调用方都能拿到订单号，缺失一定是编码疏漏，早失败比默默出错好。
+            log.error("release 缺失 orderNo，拒绝执行以防误删新订单占位: merchantId={}, payType={}, payAmount={}",
+                    merchantId, payType, payAmount);
             return;
         }
         BigDecimal normalized = payAmount.setScale(AMOUNT_SCALE, RoundingMode.HALF_UP);
         mapper.delete(new LambdaQueryWrapper<PendingPayAmount>()
                 .eq(PendingPayAmount::getMerchantId, merchantId)
                 .eq(PendingPayAmount::getPayType, payType)
-                .eq(PendingPayAmount::getPayAmount, normalized));
+                .eq(PendingPayAmount::getPayAmount, normalized)
+                .eq(PendingPayAmount::getOrderNo, orderNo));
     }
 
     @Override

@@ -162,7 +162,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             this.save(order);
         } catch (RuntimeException e) {
             // 订单落库失败要把 pay_amount 占位释放掉，否则会长时间占着一个金额白白挡后来的订单
-            pendingPayAmountService.release(merchant.getId(), qrcode.getPayType(), payAmount);
+            pendingPayAmountService.release(merchant.getId(), qrcode.getPayType(), payAmount, order.getOrderNo());
             throw e;
         }
         log.info("创建支付订单成功: orderNo={}, amount={}, payAmount={}",
@@ -252,7 +252,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         try {
             this.save(order);
         } catch (RuntimeException e) {
-            pendingPayAmountService.release(merchant.getId(), qrcode.getPayType(), payAmount);
+            pendingPayAmountService.release(merchant.getId(), qrcode.getPayType(), payAmount, order.getOrderNo());
             throw e;
         }
         log.info("创建易支付订单成功: orderNo={}, amount={}, payAmount={}, source=epay",
@@ -360,7 +360,8 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         }
 
         // 释放 pay_amount 占位，让后来的订单能复用这个金额
-        pendingPayAmountService.release(confirmed.getMerchantId(), confirmed.getPayType(), confirmed.getPayAmount());
+        pendingPayAmountService.release(confirmed.getMerchantId(), confirmed.getPayType(),
+                confirmed.getPayAmount(), confirmed.getOrderNo());
 
         log.info("订单支付确认成功: orderNo={}", orderNo);
 
@@ -396,7 +397,8 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         this.updateById(order);
 
         // 关单也要释放 pay_amount 占位
-        pendingPayAmountService.release(order.getMerchantId(), order.getPayType(), order.getPayAmount());
+        pendingPayAmountService.release(order.getMerchantId(), order.getPayType(),
+                order.getPayAmount(), order.getOrderNo());
     }
 
     @Override
@@ -452,7 +454,8 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
                 order.setStatus(Constants.OrderStatus.EXPIRED);
                 this.updateById(order);
                 // 支付页翻到时才发现的过期，也要释放占位
-                pendingPayAmountService.release(order.getMerchantId(), order.getPayType(), order.getPayAmount());
+                pendingPayAmountService.release(order.getMerchantId(), order.getPayType(),
+                        order.getPayAmount(), order.getOrderNo());
             }
         }
 
@@ -470,7 +473,8 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             order.setStatus(Constants.OrderStatus.EXPIRED);
             this.updateById(order);
             // 过期订单释放它占用的 pay_amount
-            pendingPayAmountService.release(order.getMerchantId(), order.getPayType(), order.getPayAmount());
+            pendingPayAmountService.release(order.getMerchantId(), order.getPayType(),
+                    order.getPayAmount(), order.getOrderNo());
             log.info("订单已过期: orderNo={}", order.getOrderNo());
         }
 

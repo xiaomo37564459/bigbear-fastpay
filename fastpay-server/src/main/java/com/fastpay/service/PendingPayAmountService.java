@@ -24,9 +24,16 @@ public interface PendingPayAmountService {
                         String orderNo, LocalDateTime expireTime);
 
     /**
-     * 释放占位。幂等，不存在也不报错。
+     * 释放某笔订单持有的 pay_amount 占位。幂等，不存在也不报错。
+     *
+     * 关键：删除条件除了 (merchant_id, pay_type, pay_amount) 之外，必须再加上 order_no。
+     * 否则并发场景下（比如同一笔已过期订单被两个入口同时触发释放，
+     * 中间又有一笔新订单刚抢到了同一金额），第二次释放会把新订单的占位一起删掉，
+     * 撞单场景又会原样复发。
+     *
+     * @param orderNo 必须传当前订单号，不允许 null / 空串（这是防止误删新订单占位的关键）
      */
-    void release(Long merchantId, String payType, BigDecimal payAmount);
+    void release(Long merchantId, String payType, BigDecimal payAmount, String orderNo);
 
     /**
      * 清理占位表里已经过期的残留（防止某些异常路径漏 release，长期堆积把候选耗光）。
