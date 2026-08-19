@@ -99,9 +99,24 @@ chmod 640 /etc/fastpay/fastpay-server.env
 
 ## 三、部署 / 更新版本
 
-每次发新版本，重复下面 4 步就行。
+每次发新版本，按下面顺序走。**如果这一版包含数据库结构变更（`fastpay-server/src/main/resources/db/migration/` 下有新的 `Vx_x__*.sql`），必须先跑迁移脚本再重启后端**，否则后端能起来但一登录就 500，谁都进不去。
 
 ```bash
+# 0. 【只有本次或后续版本带迁移脚本时才做】先备份库、再跑迁移
+#    - 备份放本地，别放到 /opt/fastpay 里，免得占空间和被后续部署覆盖
+ssh root@150.158.99.251 \
+  'PGPASSWORD=$DB_PASSWORD pg_dump -h <数据库host> -U <用户> -d fastpay -F c' \
+  > /path/to/backups/fastpay-$(date +%F).dump
+
+# 传本次要跑的迁移脚本（下面示例是 V1.1，如果这版没有迁移就跳过这一步）
+scp fastpay-server/src/main/resources/db/migration/V1_1__admin_account_management_pg.sql \
+    root@150.158.99.251:/tmp/
+
+# 跑迁移（生产用 PostgreSQL 走 pg 版本；如果哪台机器用的是 MySQL，换 mysql 版本）
+ssh root@150.158.99.251 \
+  'PGPASSWORD=$DB_PASSWORD psql -h <数据库host> -U <用户> -d fastpay \
+     -f /tmp/V1_1__admin_account_management_pg.sql && rm /tmp/V1_1__admin_account_management_pg.sql'
+
 # 1. 传后端 jar
 scp fastpay-server/target/fastpay-server-1.0.0.jar root@150.158.99.251:/opt/fastpay/
 
@@ -129,6 +144,19 @@ ssh root@150.158.99.251 'systemctl restart fastpay-server && sleep 15 && systemc
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-admin/
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merchant/
 ```
+
+> 💡 **忘了跑迁移脚本会怎样？**
+> 从 1.1 版本起，后端启动时会自检 `fp_admin` 表结构。如果发现缺 `token_version` 列，会**直接启动失败**并在日志里指名要跑哪个脚本。宁可服务不起来（`systemctl status` 立刻报红，运维当场就知道），也不要服务起来了但一登录就 500 —— 后者要等真实用户来投诉才能发现。
+> 出现"启动失败 + 日志提示缺列"时，回去补跑 0 步骤，再重启即可，**不要**去改 `application-prod.yml` 或 jar。
+
+**这一版（1.1）的迁移脚本清单**：
+
+| 数据库 | 脚本 | 做了什么 |
+| --- | --- | --- |
+| PostgreSQL（生产） | `db/migration/V1_1__admin_account_management_pg.sql` | `fp_admin.username` 放宽到 100 字符；新增 `token_version INT DEFAULT 0` 列 |
+| MySQL（本地/老装机） | `db/migration/V1_1__admin_account_management_mysql.sql` | 同上，MySQL 方言 |
+
+两个脚本都是幂等的（用了 `IF NOT EXISTS`），误跑两次不会中断部署。
 
 前端是纯静态文件，替换完立刻生效，不用重启 nginx。
 
@@ -159,6 +187,7 @@ tail -n 200 /opt/fastpay/logs/fastpay-server.log   # 应用日志
 | `Could not resolve placeholder 'fastpay.jwt.secret'` | profile 没生效 | 检查 env 文件里有没有 `SPRING_PROFILES_ACTIVE=prod` |
 | `Could not resolve placeholder 'DB_URL'` | 环境变量没读到 | 检查 `/etc/fastpay/fastpay-server.env` 和它的权限 |
 | `password authentication failed` | 数据库账号密码不对 | 核对 env 文件里的 `DB_USERNAME` / `DB_PASSWORD` |
+| `fp_admin 表缺少 token_version 列` | 数据库还是老版结构，缺 1.1 迁移 | 补跑第三节 0 步骤里的迁移脚本，再重启后端 |
 | `ClassNotFoundException: org.apache.commons.lang3.StringUtils` | jar 打漏了依赖 | 见下面「已知坑」 |
 
 服务配了自动重启（`Restart=always`，5 秒后重试），进程被杀会自己起来；服务器重启也会自动启动（`systemctl is-enabled` 是 `enabled`）。
@@ -255,8 +284,17 @@ nginx: [emerg] unknown "connection_upgrade" variable
 2. **`fastpay-merchant` 依赖 `less`。**
    支付页和支付结果页用了 `lang="less"` 的样式，`package.json` 里必须保留 `less` 这个 devDependency，否则 `npm run build` 直接失败。
 
-3. **默认管理员账号 `admin / 123456` 写在公开仓库的建表脚本里。**
-   任何人都能查到。**新环境部署完第一件事就是登录后台改掉这个密码**，别等接第一个真实商户。
-   （`application-prod.yml` 里的 JWT 密钥已经改成必须由环境变量注入、没有默认值，这条不再是风险；`application-dev.yml` 里那个开发用的默认密钥仍然是公开的，本地开发无所谓，但**不要拿 dev 配置上生产**。）
+3. **首次部署时，管理员账号密码从哪来。**（1.1 起，公开仓库里不再有默认的 `admin/123456`）
+   - 生产 yml 里只配了 `FASTPAY_ADMIN_INITIAL_USERNAME`（默认 `admin`），**故意不设 `FASTPAY_ADMIN_INITIAL_PASSWORD`**。
+   - 首次启动、库里没有任何管理员时，`InitConfig` 会随机生成一个 16 位密码，明文只写到 warn 日志里一次，形如：
+     ```
+     WARN c.fastpay.service.impl.AdminServiceImpl - ==========================...
+     WARN c.fastpay.service.impl.AdminServiceImpl - 首次启动，已自动创建管理员账号：
+     WARN c.fastpay.service.impl.AdminServiceImpl -   账号：admin
+     WARN c.fastpay.service.impl.AdminServiceImpl -   初始密码：xxxxxxxxxxxxxxxx
+     ```
+     运维在 `journalctl -u fastpay-server | grep '初始密码'` 里拿到之后，**立刻登进后台改成自己的密码**，之后就再也拿不到了。
+   - 如果需求方偏要指定一个初始密码（例如迁移场景），在 `/etc/fastpay/fastpay-server.env` 里加一行 `FASTPAY_ADMIN_INITIAL_PASSWORD=<你想要的密码>`，然后首次启动。用完这一次记得**立刻删掉这一行**（不然下次重装库时又会被人在 env 文件里看到）。
+   - `application-prod.yml` 里的 JWT 密钥同样没有默认值，必须由环境变量注入；`application-dev.yml` 里那个开发用的默认密钥仍然是公开的，本地开发无所谓，但**不要拿 dev 配置上生产**。
 
 4. **前端目录权限每次更新都要重新收紧。** 见上面「三、部署 / 更新版本」里的说明 —— Windows 打的 tar 包解压到 Linux 会变成全局可写。

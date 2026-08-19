@@ -10,8 +10,8 @@
           <div class="username">{{ profile.username || '—' }}</div>
           <div class="nickname">{{ profile.nickname || '超级管理员' }}</div>
           <div class="last-login">
-            上次登录：{{ profile.lastLoginTime || '—' }}
-            <span v-if="profile.lastLoginIp"> · {{ profile.lastLoginIp }}</span>
+            上次登录：{{ lastLoginTimeText }}
+            <span v-if="lastLoginIpText"> · {{ lastLoginIpText }}</span>
           </div>
         </div>
       </div>
@@ -22,7 +22,7 @@
       <el-card class="section-card" shadow="never">
         <template #header>
           <div class="section-title">
-            <span>修改登录账号</span>
+            <span class="section-title-text">修改登录账号</span>
             <span class="section-desc">支持普通字符串或邮箱格式（例如 name@example.com）</span>
           </div>
         </template>
@@ -66,7 +66,7 @@
       <el-card class="section-card" shadow="never">
         <template #header>
           <div class="section-title">
-            <span>修改登录密码</span>
+            <span class="section-title-text">修改登录密码</span>
             <span class="section-desc">{{ policyText }}</span>
           </div>
         </template>
@@ -124,9 +124,10 @@
  * 改账号后前端就地替换 token 并刷新展示；改密码后前端主动清 token 并跳登录页，
  * 让用户"用新密码重新登录"这件事有明确的动作反馈。
  */
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import dayjs from 'dayjs'
 import {
   getAdminProfile,
   getPasswordPolicy,
@@ -151,6 +152,24 @@ const policy = reactive({
   description: '密码长度 8~64 位，必须同时包含字母和数字，且不能是 123456、admin123 这类常见弱口令'
 })
 const policyText = ref(policy.description)
+
+// 时间格式化：后端 LocalDateTime 默认走 ISO（yyyy-MM-ddTHH:mm:ss.SSSSSS），
+// 直接展示对管理员不友好，这里统一裁成秒的 yyyy-MM-dd HH:mm:ss。
+const lastLoginTimeText = computed(() => {
+  if (!profile.lastLoginTime) return '—'
+  const parsed = dayjs(profile.lastLoginTime)
+  return parsed.isValid() ? parsed.format('YYYY-MM-DD HH:mm:ss') : profile.lastLoginTime
+})
+
+// IP 展示：本机访问会打出 0:0:0:0:0:0:0:1 / ::1 / 127.0.0.1，对管理员没意义，替换成"本机"
+const lastLoginIpText = computed(() => {
+  const raw = (profile.lastLoginIp || '').trim()
+  if (!raw) return ''
+  if (['127.0.0.1', 'localhost', '::1', '0:0:0:0:0:0:0:1'].includes(raw)) {
+    return '本机'
+  }
+  return raw
+})
 
 // ---------- 改账号 ----------
 const usernameFormRef = ref()
@@ -334,13 +353,16 @@ onMounted(async () => {
   border: 1px solid #ebeef5;
 }
 
+/* 卡片标题：标题一行、说明另一行，宽度受限时说明自动折行、不会挤压标题。
+   之前用 flex + justify-content:space-between + baseline，右侧卡片
+   （"修改登录密码"标题短、说明长）会把标题挤成两行，看起来跟左侧不齐。 */
 .section-title {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.section-title > span:first-child {
+.section-title-text {
   font-weight: 600;
   color: #1f2937;
 }
@@ -348,7 +370,9 @@ onMounted(async () => {
 .section-desc {
   font-size: 12px;
   color: #9ca3af;
-  margin-left: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .hint {
