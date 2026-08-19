@@ -4,6 +4,7 @@ import OrderList from '@/views/order/index.vue'
 import {
   ORDER_COLUMN_WIDTHS,
   ORDER_COLUMN_CAPS,
+  MEASURED_MIN_WIDTHS,
   TABLE_WIDTH_AT_1280,
   totalColumnWidth,
   resolveColumnWidths
@@ -58,6 +59,22 @@ const unpaidOrder = {
   payTime: null
 }
 
+// 大额订单。原来的假数据只有 ¥199.00 和 ¥9.90 两种小额，
+// 结果金额列宽给少了 10px 也没人发现（MTM-168 验收打回的就是这条）。
+const bigAmountOrder = {
+  orderNo: 'FP20260819110200778899',
+  outTradeNo: 'SHOP-ORDER-20260819-000003',
+  merchantName: '深圳大冰熊科技有限公司',
+  shopName: '深圳南山旗舰店',
+  amount: '888888.88',
+  payType: 'wxpay',
+  status: 1,
+  notifyStatus: 1,
+  notifyCount: 1,
+  createTime: '2026-08-19T11:02:00',
+  payTime: '2026-08-19T11:02:31'
+}
+
 function mountList() {
   return mount(OrderList, {
     global: {
@@ -69,7 +86,7 @@ function mountList() {
 beforeEach(() => {
   vi.clearAllMocks()
   getMerchantList.mockResolvedValue({ data: [] })
-  getOrderPage.mockResolvedValue({ data: { records: [paidOrder, unpaidOrder], total: 2 } })
+  getOrderPage.mockResolvedValue({ data: { records: [paidOrder, unpaidOrder, bigAmountOrder], total: 3 } })
 })
 
 describe('订单列表 - 创建时间要看得全', () => {
@@ -80,9 +97,9 @@ describe('订单列表 - 创建时间要看得全', () => {
     const dates = wrapper.findAll('.time-date').map(node => node.text())
     const clocks = wrapper.findAll('.time-clock').map(node => node.text())
 
-    // 第一行订单：创建 10:30:00、支付 10:31:08；第二行订单没支付，只有创建时间
-    expect(dates).toEqual(['2026-08-19', '2026-08-19', '2026-08-19'])
-    expect(clocks).toEqual(['10:30:00', '10:31:08', '10:45:00'])
+    // 第一行：创建 10:30:00、支付 10:31:08；第二行没支付，只有创建时间；第三行两个都有
+    expect(dates).toEqual(Array(5).fill('2026-08-19'))
+    expect(clocks).toEqual(['10:30:00', '10:31:08', '10:45:00', '11:02:00', '11:02:31'])
   })
 
   it('没支付的订单，支付时间显示占位符而不是空白', async () => {
@@ -194,5 +211,49 @@ describe('订单列表 - 窗口变宽时富余宽度怎么分', () => {
     const cols = resolveColumnWidths(tableWidthAt(1024))
     expect(cols).toEqual(ORDER_COLUMN_WIDTHS)
     expect(totalColumnWidth(cols)).toBe(TABLE_WIDTH_AT_1280)
+  })
+})
+
+/**
+ * 订单列表 - 金额不许折行（MTM-168 验收打回）
+ *
+ * 之前金额列只给了 88px，是照着「¥12800.00」这一条测试数据定的。
+ * 真实业务里管理员会看到十万、百万级订单，这些在 88px 下会折成
+ * "¥888888." / "88" 两行，整行跟着变高，一列数字忽高忽低没法扫读。
+ *
+ * MEASURED_MIN_WIDTHS 里的数字全是在 Chromium 里把列宽逐档调窄、
+ * 真渲染出来看折不折行量到的，不是拿文字宽度加内边距算的。
+ */
+describe('订单列表 - 金额列要放得下大额订单', () => {
+  it('金额列放得下百万级金额（¥888888.88），任何窗口宽度下都不折行', () => {
+    expect(ORDER_COLUMN_WIDTHS.amount).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.amountMillion)
+
+    // 金额列是固定宽度，不吃富余宽度，所以窄窗口也是这个宽度，得逐档确认
+    for (const viewport of [1024, 1280, 1366, 1440, 1920]) {
+      const cols = resolveColumnWidths(viewport - 220 - 40 - 40 - 6)
+      expect(cols.amount).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.amountMillion)
+    }
+  })
+
+  it('大额订单的金额一位数字都不少地渲染出来', async () => {
+    const wrapper = mountList()
+    await flushPromises()
+
+    const amounts = wrapper.findAll('.amount-text').map(node => node.text())
+    expect(amounts).toContain('¥888888.88')
+  })
+
+  it('整张表加起来仍然放得进 1280，金额列变宽不能把表挤到横向滚动', () => {
+    expect(totalColumnWidth()).toBe(TABLE_WIDTH_AT_1280)
+  })
+
+  it('其它几列也都还在各自的实测下限之上', () => {
+    // 金额列的 10px 是从商户列挪过来的，别顺手把别的列削到不够用
+    expect(ORDER_COLUMN_WIDTHS.orderNo).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.orderNo)
+    expect(ORDER_COLUMN_WIDTHS.payType).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.fourCharHeader)
+    expect(ORDER_COLUMN_WIDTHS.notify).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.fourCharHeader)
+    expect(ORDER_COLUMN_WIDTHS.createTime).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.time)
+    expect(ORDER_COLUMN_WIDTHS.payTime).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.time)
+    expect(ORDER_COLUMN_WIDTHS.action).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.action)
   })
 })
