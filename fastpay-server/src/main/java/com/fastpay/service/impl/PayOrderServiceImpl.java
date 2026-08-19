@@ -342,6 +342,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
 
     @Override
     public Page<PayOrder> pageOrders(Page<PayOrder> page, Long merchantId, Long shopId, String orderNo, Integer status) {
+        // 管理后台只有一个「平台/商户订单号」搜索框，两个字段任一命中都算，因此保留 OR 语义
         LambdaQueryWrapper<PayOrder> wrapper = new LambdaQueryWrapper<>();
         if (merchantId != null) {
             wrapper.eq(PayOrder::getMerchantId, merchantId);
@@ -357,10 +358,46 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             wrapper.eq(PayOrder::getStatus, status);
         }
         wrapper.orderByDesc(PayOrder::getCreateTime);
+        return runPageAndEnrichNames(page, wrapper);
+    }
 
+    @Override
+    public Page<PayOrder> pageMerchantOrders(Page<PayOrder> page, Long merchantId, Long shopId,
+                                             String orderNo, String outTradeNo, String subject,
+                                             String payType, Integer status) {
+        // 商户端搜索框拆成独立字段：平台订单号 / 商户订单号 / 商品名称 各自模糊匹配；
+        // 支付类型、状态、店铺是精确匹配。多个筛选之间取 AND。
+        LambdaQueryWrapper<PayOrder> wrapper = new LambdaQueryWrapper<>();
+        if (merchantId != null) {
+            wrapper.eq(PayOrder::getMerchantId, merchantId);
+        }
+        if (shopId != null) {
+            wrapper.eq(PayOrder::getShopId, shopId);
+        }
+        if (StringUtils.hasText(orderNo)) {
+            wrapper.like(PayOrder::getOrderNo, orderNo);
+        }
+        if (StringUtils.hasText(outTradeNo)) {
+            wrapper.like(PayOrder::getOutTradeNo, outTradeNo);
+        }
+        if (StringUtils.hasText(subject)) {
+            wrapper.like(PayOrder::getSubject, subject);
+        }
+        if (StringUtils.hasText(payType)) {
+            wrapper.eq(PayOrder::getPayType, payType);
+        }
+        if (status != null) {
+            wrapper.eq(PayOrder::getStatus, status);
+        }
+        wrapper.orderByDesc(PayOrder::getCreateTime);
+        return runPageAndEnrichNames(page, wrapper);
+    }
+
+    /**
+     * 分页 + 回填商户名 / 店铺名，两个 page 查询共用一段收尾逻辑
+     */
+    private Page<PayOrder> runPageAndEnrichNames(Page<PayOrder> page, LambdaQueryWrapper<PayOrder> wrapper) {
         Page<PayOrder> result = this.page(page, wrapper);
-
-        // 填充商户和店铺名称
         result.getRecords().forEach(order -> {
             Merchant merchant = merchantMapper.selectById(order.getMerchantId());
             if (merchant != null) {
@@ -371,13 +408,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
                 order.setShopName(shop.getShopName());
             }
         });
-
         return result;
-    }
-
-    @Override
-    public Page<PayOrder> pageMerchantOrders(Page<PayOrder> page, Long merchantId, Long shopId, Integer status) {
-        return pageOrders(page, merchantId, shopId, null, status);
     }
 
     @Override
