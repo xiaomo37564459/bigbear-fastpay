@@ -71,8 +71,13 @@
         </el-alert>
 
         <el-table :data="tableData" v-loading="loading" stripe class="unmatched-table">
+          <!-- 「没查出来」和「真的一笔都没有」是两回事，说反了会让运营以为钱都对上了 -->
           <template #empty>
-            <div class="empty-hint" data-test="unmatched-empty">
+            <div v-if="loadError" class="empty-hint" data-test="unmatched-empty-failed">
+              <p class="empty-title">这一页没能加载出来</p>
+              <p class="empty-desc">先别当成「没有」—— 可能正有几笔钱悬在这儿，点上面的「重新加载」再看一次</p>
+            </div>
+            <div v-else class="empty-hint" data-test="unmatched-empty">
               <p class="empty-title">这段时间没有认不到订单的收款</p>
               <p class="empty-desc">说明每一笔进来的钱都对上了订单，不用管这个页面</p>
             </div>
@@ -151,7 +156,8 @@
           </el-table-column>
         </el-table>
 
-        <div class="pagination-wrapper">
+        <!-- 没查出来时「共 0 条」也是同一句反话的小字版，一起藏掉 -->
+        <div v-if="!loadError" class="pagination-wrapper" data-test="unmatched-pagination">
           <el-pagination
             v-model:current-page="queryParams.current"
             v-model:page-size="queryParams.size"

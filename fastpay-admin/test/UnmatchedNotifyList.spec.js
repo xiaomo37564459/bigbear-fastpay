@@ -160,6 +160,35 @@ describe('未匹配收款列表 - 看得见这笔钱', () => {
     expect(empty.text()).toContain('没有')
   })
 
+  it('接口挂了的时候，表格里不许再说「每一笔钱都对上了」这种反话', async () => {
+    // 上面报红「没查出来」、下面同时安慰「钱都对上了」，运营眼睛往下一扫就被带偏，
+    // 可实际情况是根本没查出来，很可能正有几笔钱悬着。这两句话不能同时出现。
+    getUnmatchedNotifyPage.mockRejectedValue(new Error('服务 500'))
+    wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="unmatched-error"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="unmatched-empty"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('每一笔进来的钱都对上了')
+
+    const failed = wrapper.find('[data-test="unmatched-empty-failed"]')
+    expect(failed.exists()).toBe(true)
+    expect(failed.text()).toContain('没能加载出来')
+
+    // 「共 0 条」也是同一句反话的小字版，出错时一起藏掉
+    expect(wrapper.find('[data-test="unmatched-pagination"]').exists()).toBe(false)
+  })
+
+  it('查出来真的是 0 条时，才说「一笔都没有」这句安慰话', async () => {
+    mockPage([], 0)
+    wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="unmatched-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="unmatched-empty-failed"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="unmatched-pagination"]').exists()).toBe(true)
+  })
+
   it('接口挂了要说清楚是没查出来，并给一个重试入口，不是假装没有数据', async () => {
     getUnmatchedNotifyPage.mockRejectedValue(new Error('服务 500'))
     wrapper = mountPage()
