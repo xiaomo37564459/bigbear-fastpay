@@ -364,6 +364,166 @@ abstract class AbstractFullFlowTest {
         assertThat(postResp.get("msg").asText()).contains("退款");
     }
 
+    // ============================================================
+    // 以下 step14 ~ step18 覆盖 MTM-170：pay_amount 微调 + 撞单认对人 + 幂等 + 未匹配落表 +
+    // 易支付 money 回传原始 amount。都放在 step13 之后，避免动 step6/step8 的既有断言口径
+    // ============================================================
+
+    @Test
+    @Order(14)
+    void step14_sameAmountOrdersGetDistinctPayAmounts() throws Exception {
+        String orderA = createSignedOrder("IT_C0000001", "5.00", "撞单-A");
+        String orderB = createSignedOrder("IT_C0000002", "5.00", "撞单-B");
+
+        BigDecimal payAmountA = readPayAmount(orderA);
+        BigDecimal payAmountB = readPayAmount(orderB);
+
+        // 关键：两笔订单同 amount，pay_amount 必须不同
+        assertThat(payAmountA).isNotNull();
+        assertThat(payAmountB).isNotNull();
+        assertThat(payAmountA).isNotEqualByComparingTo(payAmountB);
+        // 第一笔应当拿到原始金额
+        assertThat(payAmountA).isEqualByComparingTo(new BigDecimal("5.00"));
+    }
+
+    @Test
+    @Order(15)
+    void step15_notifyMatchesByPayAmountNotByAmount() throws Exception {
+        // 场景：A 先下单 5.55 不付、B 后下单 5.55 付款，通知带的是 B 的 pay_amount
+        String orderA = createSignedOrder("IT_M0000001", "5.55", "撞单认对人-A");
+        String orderB = createSignedOrder("IT_M0000002", "5.55", "撞单认对人-B");
+        BigDecimal payAmountA = readPayAmount(orderA);
+        BigDecimal payAmountB = readPayAmount(orderB);
+        assertThat(payAmountA).isNotEqualByComparingTo(payAmountB);
+
+        // 用 B 的 pay_amount 发通知：老版本会把 A 认成已支付（撞单 bug），修复后必须是 B
+        sendWxPayNotify(payAmountB.toPlainString());
+
+        JsonNode aStatus = dataOf(getJson("/api/pay/status/" + orderA, null));
+        assertThat(aStatus.get("status").asInt()).isEqualTo(0); // A 依然待支付
+
+        JsonNode bStatus = dataOf(getJson("/api/pay/status/" + orderB, null));
+        assertThat(bStatus.get("status").asInt()).isEqualTo(1); // B 已支付
+        assertThat(bStatus.get("payAmount").decimalValue()).isEqualByComparingTo(payAmountB);
+    }
+
+    @Test
+    @Order(16)
+    void step16_duplicateNotifyIsIdempotent() throws Exception {
+        String orderNo = createSignedOrder("IT_D0000001", "6.66", "重复通知幂等");
+        BigDecimal payAmount = readPayAmount(orderNo);
+
+        BigDecimal merchantTotalAmountBefore = readMerchantTotalAmount(merchantId);
+        long merchantTotalCountBefore = readMerchantTotalCount(merchantId);
+
+        // 连发两次同金额通知：老版本可能双重累加统计 + 双重回调，修复后必须只算一次
+        sendWxPayNotify(payAmount.toPlainString());
+        sendWxPayNotify(payAmount.toPlainString());
+
+        JsonNode status = dataOf(getJson("/api/pay/status/" + orderNo, null));
+        assertThat(status.get("status").asInt()).isEqualTo(1);
+
+        long merchantTotalCountAfter = readMerchantTotalCount(merchantId);
+        BigDecimal merchantTotalAmountAfter = readMerchantTotalAmount(merchantId);
+        assertThat(merchantTotalCountAfter - merchantTotalCountBefore).isEqualTo(1);
+        assertThat(merchantTotalAmountAfter.subtract(merchantTotalAmountBefore))
+                .isEqualByComparingTo(payAmount);
+    }
+
+    @Test
+    @Order(17)
+    void step17_unmatchedNotifyIsRecordedAndVisibleInAdmin() throws Exception {
+        long unmatchedBefore = countUnmatchedNotifyByAmount(new BigDecimal("999.99"));
+
+        // 发一笔完全对不上任何订单的金额
+        sendWxPayNotify("999.99");
+
+        long unmatchedAfter = countUnmatchedNotifyByAmount(new BigDecimal("999.99"));
+        assertThat(unmatchedAfter - unmatchedBefore).isEqualTo(1);
+
+        // 管理后台也能查到这条待处理记录
+        JsonNode page = dataOf(getJson(
+                "/api/admin/unmatched-notify/page?current=1&size=50&handleStatus=0", adminToken));
+        assertThat(page.get("total").asLong()).isGreaterThanOrEqualTo(1L);
+        boolean found = false;
+        for (JsonNode row : page.get("records")) {
+            if (row.get("amount").decimalValue().compareTo(new BigDecimal("999.99")) == 0) {
+                found = true;
+                assertThat(row.get("handleStatus").asInt()).isEqualTo(0);
+                assertThat(row.get("payType").asText()).isEqualTo("wxpay");
+                break;
+            }
+        }
+        assertThat(found).as("后台未匹配通知列表应包含刚发的 999.99 元通知").isTrue();
+    }
+
+    @Test
+    @Order(18)
+    void step18_epayCallbackMoneyKeepsOriginalAmount() throws Exception {
+        // 起本地 HTTP 服务捕获易支付回调
+        BlockingQueue<CapturedRequest> captured = new ArrayBlockingQueue<>(4);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try {
+            server.createContext("/notify", exchange -> {
+                CapturedRequest req = new CapturedRequest();
+                req.method = exchange.getRequestMethod();
+                req.rawQuery = exchange.getRequestURI().getRawQuery();
+                captured.offer(req);
+                byte[] body = "success".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(body);
+                }
+            });
+            server.start();
+
+            int port = server.getAddress().getPort();
+            String notifyUrl = "http://127.0.0.1:" + port + "/notify";
+
+            // A 先下 8.88，占掉 pay_amount=8.88
+            Map<String, String> paramsA = new LinkedHashMap<>();
+            paramsA.put("pid", merchantNo);
+            paramsA.put("out_trade_no", "EPAY_M001A");
+            paramsA.put("type", "wxpay");
+            paramsA.put("name", "money 测试 A");
+            paramsA.put("money", "8.88");
+            paramsA.put("notify_url", "http://127.0.0.1:1/no-op-A");
+            paramsA.put("sign", EpaySignUtil.generateSign(paramsA, merchantApiSecret));
+            paramsA.put("sign_type", "MD5");
+            objectMapper.readTree(postForm("/mapi.php", paramsA).getResponse().getContentAsByteArray());
+
+            // B 后下 8.88，pay_amount 会被微调（比如 8.89）
+            Map<String, String> paramsB = new LinkedHashMap<>();
+            paramsB.put("pid", merchantNo);
+            paramsB.put("out_trade_no", "EPAY_M001B");
+            paramsB.put("type", "wxpay");
+            paramsB.put("name", "money 测试 B");
+            paramsB.put("money", "8.88");
+            paramsB.put("notify_url", notifyUrl);
+            paramsB.put("sign", EpaySignUtil.generateSign(paramsB, merchantApiSecret));
+            paramsB.put("sign_type", "MD5");
+            JsonNode createB = objectMapper.readTree(
+                    postForm("/mapi.php", paramsB).getResponse().getContentAsByteArray());
+            String bTradeNo = createB.get("trade_no").asText();
+
+            BigDecimal payAmountB = readPayAmount(bTradeNo);
+            assertThat(payAmountB).isNotEqualByComparingTo(new BigDecimal("8.88"));
+
+            // 手动确认 B，触发易支付回调
+            postJson("/api/admin/order/" + bTradeNo + "/confirm", adminToken, Map.of());
+
+            CapturedRequest cb = captured.poll(15, TimeUnit.SECONDS);
+            assertThat(cb).as("在 15s 内应收到易支付回调").isNotNull();
+            Map<String, String> parsed = parseQuery(cb.rawQuery);
+            // 关键：money 必须是"原始订单金额" 8.88，不是微调后的 pay_amount
+            // sub2api 那边记的订单是 8.88，我们回传 8.89 它会拒收 → 付了钱不给用户充值
+            assertThat(parsed.get("money")).isEqualTo("8.88");
+            assertThat(parsed.get("trade_status")).isEqualTo("TRADE_SUCCESS");
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test
     @Order(13)
     void step13_epaySourceOrderCallbackIsGetWithEpayFormat() throws Exception {
@@ -548,6 +708,66 @@ abstract class AbstractFullFlowTest {
             request = request.param(e.getKey(), e.getValue());
         }
         return mockMvc.perform(request).andReturn();
+    }
+
+    /**
+     * 读订单当前落库的 pay_amount
+     */
+    private BigDecimal readPayAmount(String orderNo) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT pay_amount FROM fp_pay_order WHERE order_no = ?")) {
+            ps.setString(1, orderNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getBigDecimal("pay_amount");
+            }
+        }
+    }
+
+    /**
+     * 读商户累计订单数（用来验证幂等：只累加一次）
+     */
+    private long readMerchantTotalCount(Long merchantId) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT total_count FROM fp_merchant WHERE id = ?")) {
+            ps.setLong(1, merchantId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getLong("total_count");
+            }
+        }
+    }
+
+    /**
+     * 读商户累计收款金额
+     */
+    private BigDecimal readMerchantTotalAmount(Long merchantId) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT total_amount FROM fp_merchant WHERE id = ?")) {
+            ps.setLong(1, merchantId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getBigDecimal("total_amount");
+            }
+        }
+    }
+
+    /**
+     * 数 fp_unmatched_notify 里指定金额的行数（用来验证"钱到了但认不到单"被落表了）
+     */
+    private long countUnmatchedNotifyByAmount(BigDecimal amount) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM fp_unmatched_notify WHERE amount = ?")) {
+            ps.setBigDecimal(1, amount);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getLong(1);
+            }
+        }
     }
 
     private static Map<String, String> parseQuery(String rawQuery) {

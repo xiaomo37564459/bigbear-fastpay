@@ -169,6 +169,8 @@ public class PayController {
         result.put("orderNo", order.getOrderNo());
         result.put("outTradeNo", order.getOutTradeNo());
         result.put("amount", order.getAmount());
+        // 支付页显示、前端提示"必须按 X.XX 元付款"，都要用微调后的 payAmount，不是 amount
+        result.put("payAmount", order.getPayAmount());
         result.put("subject", order.getSubject());
         result.put("status", order.getStatus());
         result.put("payType", order.getPayType());
