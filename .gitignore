@@ -35,3 +35,15 @@ PG.txt
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 真实配置、密钥、证书私钥，绝不能进仓库。判断标准见 docs/SECRETS.md
+# 注意：这里只挡文件名，挡不住你把密码直接写进 .md 或 .yml 里 —— 提交前还是要自己扫一遍
+.env
+*.env
+!*.env.example
+*.pem
+*.key
+*.p12
+*.jks
+id_rsa*
+id_ed25519*
