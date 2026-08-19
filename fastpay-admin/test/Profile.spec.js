@@ -124,6 +124,42 @@ describe('账号设置页 - 首屏加载状态', () => {
     expect(getAdminProfile).toHaveBeenCalledTimes(2)
   })
 
+  it('加载态和正常态的高度骨架一模一样，切换的时候页面不会往上跳（MTM-168）', async () => {
+    // 之前加载提示是资料卡底下额外多出来的一行，正常态没有这一行，
+    // 数据一回来卡片矮 28px，整页跟着往上蹿一下。
+    // 现在两个状态共用 .profile-state 高度容器，meta 里都是固定的三行，高度必然相等。
+    const profileReq = pending()
+    getAdminProfile.mockReturnValue(profileReq.promise)
+    getPasswordPolicy.mockResolvedValue({ data: policyData })
+
+    const wrapper = mountProfile()
+    await flushPromises()
+
+    const loading = wrapper.find('[data-test="profile-loading"]')
+    expect(loading.classes()).toContain('profile-state')
+    // 「正在加载」这句话必须在 meta 的第三行里，而不是 meta 外面多出来的一块
+    expect(loading.find('.meta .line-last-login.loading-tip').exists()).toBe(true)
+    const loadingLines = loading.findAll('.meta .line').length
+
+    profileReq.settle.resolve({ data: profileData })
+    await flushPromises()
+
+    const ready = wrapper.find('[data-test="profile-ready"]')
+    expect(ready.classes()).toContain('profile-state')
+    expect(ready.findAll('.meta .line').length).toBe(loadingLines)
+    expect(loadingLines).toBe(3)
+  })
+
+  it('加载失败那一版也套同一个高度容器，页面同样不跳', async () => {
+    getAdminProfile.mockRejectedValue(new Error('网络错误'))
+    getPasswordPolicy.mockResolvedValue({ data: policyData })
+
+    const wrapper = mountProfile()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="profile-error-state"]').classes()).toContain('profile-state')
+  })
+
   it('密码规则接口挂了不影响账号资料展示，规则文案退回前端兜底', async () => {
     getAdminProfile.mockResolvedValue({ data: profileData })
     getPasswordPolicy.mockRejectedValue(new Error('规则接口 500'))
