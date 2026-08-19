@@ -487,6 +487,11 @@ abstract class AbstractFullFlowTest {
                 assertThat(rs.getString("order_source")).isEqualTo("epay");
             }
         }
+
+        // 走一遍管理后台的详情 API，确认这两个字段真的通过 JSON 出去，不只是躺在数据库里
+        JsonNode adminSuccess = dataOf(getJson("/api/admin/order/" + successOrderNo, adminToken));
+        assertThat(adminSuccess.get("notifyResult").asText()).isEqualTo("success");
+        assertThat(adminSuccess.get("notifyError").isNull()).isTrue();
     }
 
     @Test
@@ -528,6 +533,11 @@ abstract class AbstractFullFlowTest {
                 assertThat(err.toLowerCase()).containsAnyOf("connect", "refused", "拒绝", "socket");
             }
         }
+
+        // 商户中心侧走一遍详情 API（本商户看本商户订单），确认 notifyError 也通过 JSON 出去
+        JsonNode merchantFail = dataOf(getJson("/api/merchant/order/" + failOrderNo, merchantToken));
+        assertThat(merchantFail.get("notifyError").asText().toLowerCase()).containsAnyOf("connect", "refused", "socket");
+        assertThat(merchantFail.get("notifyResult").isNull()).isTrue();
     }
 
     @Test
@@ -586,6 +596,47 @@ abstract class AbstractFullFlowTest {
             assertThat(merchantRecords.get(i).has("orderSource"))
                     .as("商户中心列表每条记录都要有 orderSource").isTrue();
         }
+    }
+
+    @Test
+    @Order(20)
+    void step20_merchantCannotReadOtherMerchantOrder() throws Exception {
+        // 场景：商户 A 名下有订单，商户 B 名下没有；B 拿到 A 的订单号来查详情，必须被拒。
+        // 这段回归的是 QA 在验收 MTM-157 时发现的越权：改之前详情接口不校验归属，
+        // 商户 B 能把 A 的商户名、店铺名、回调返回内容整个读走。
+        String otherUsername = "it_merchant_02";
+        String otherPassword = "TestPass456";
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("merchantName", "IT Test Merchant 2");
+        body.put("username", otherUsername);
+        body.put("password", otherPassword);
+        body.put("contactName", "Tester");
+        body.put("contactPhone", "13800000001");
+        postJson("/api/admin/merchant", adminToken, body);
+
+        JsonNode login = dataOf(postJson("/api/merchant/login", null,
+                Map.of("username", otherUsername, "password", otherPassword)));
+        String otherToken = login.get("token").asText();
+        assertThat(otherToken).isNotBlank();
+
+        // 拿 B 的令牌查 A 的订单，接口层面必须回错：不放行、不返回订单数据
+        MvcResult crossResult = mockMvc.perform(get("/api/merchant/order/" + firstOrderNo)
+                        .header("Authorization", "Bearer " + otherToken))
+                .andReturn();
+        JsonNode crossBody = objectMapper.readTree(crossResult.getResponse().getContentAsByteArray());
+        assertThat(crossBody.get("code").asInt()).as("越权访问必须被拒").isNotEqualTo(200);
+        assertThat(crossBody.get("message").asText()).contains("无权"); // "无权"
+        assertThat(crossBody.has("data") && !crossBody.get("data").isNull() ? crossBody.get("data") : null)
+                .as("拒绝时不许把订单数据带出去").isNull();
+
+        // 反向验证：B 查自己名下的订单列表应该是空的（避免因为 B 有订单误判上面的越权检查）
+        JsonNode ownPage = dataOf(getJson("/api/merchant/order/page?current=1&size=10", otherToken));
+        assertThat(ownPage.get("total").asLong()).isEqualTo(0L);
+
+        // 反向验证：管理员用同一个订单号查，还是能查到（管理员不走归属校验）
+        JsonNode adminView = dataOf(getJson("/api/admin/order/" + firstOrderNo, adminToken));
+        assertThat(adminView.get("merchantName").asText()).isEqualTo("IT Test Merchant");
     }
 
     /**

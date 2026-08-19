@@ -245,10 +245,16 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
     }
 
     @Override
-    public PayOrder getOrderDetail(String orderNo) {
+    public PayOrder getOrderDetail(String orderNo, Long merchantId) {
         PayOrder order = this.queryOrder(orderNo);
         if (order == null) {
             return null;
+        }
+        // 归属校验：merchantId != null 表示商户中心侧调用，只能看自己的订单，
+        // 抛的异常和 confirmPay / closeOrder / resendNotify 三处保持一致。
+        // 管理后台传 null，直接放行。
+        if (merchantId != null && !merchantId.equals(order.getMerchantId())) {
+            throw new BusinessException("无权操作此订单");
         }
         // 补齐商户名和店铺名，跟列表接口口径保持一致
         if (order.getMerchantId() != null) {

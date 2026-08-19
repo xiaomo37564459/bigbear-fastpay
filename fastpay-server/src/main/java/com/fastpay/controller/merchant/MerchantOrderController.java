@@ -48,8 +48,11 @@ public class MerchantOrderController {
      */
     @Operation(summary = "订单详情", description = "根据订单号获取订单详情")
     @GetMapping("/{orderNo}")
-    public Result<PayOrder> getByOrderNo(@PathVariable String orderNo) {
-        PayOrder order = payOrderService.getOrderDetail(orderNo);
+    public Result<PayOrder> getByOrderNo(@PathVariable String orderNo, HttpServletRequest request) {
+        // 商户端必须带上当前登录商户 ID 做归属校验，别的商户的订单不能查（跟同文件 confirmPay / closeOrder /
+        // resendNotify 的做法一致），否则会把商户名、店铺名、回调返回内容这些数据泄露给其他商户。
+        Long merchantId = (Long) request.getAttribute("userId");
+        PayOrder order = payOrderService.getOrderDetail(orderNo, merchantId);
         return Result.success(order);
     }
 
