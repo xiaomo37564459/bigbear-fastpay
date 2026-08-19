@@ -3,8 +3,10 @@ import { mount, flushPromises } from '@vue/test-utils'
 import OrderList from '@/views/order/index.vue'
 import {
   ORDER_COLUMN_WIDTHS,
+  ORDER_COLUMN_CAPS,
   TABLE_WIDTH_AT_1280,
-  totalColumnWidth
+  totalColumnWidth,
+  resolveColumnWidths
 } from '@/views/order/columns'
 
 /**
@@ -109,5 +111,88 @@ describe('订单列表 - 创建时间要看得全', () => {
     // 时间列要留得下完整的 "2026-08-19" / "10:30:00" 两行
     expect(ORDER_COLUMN_WIDTHS.createTime).toBeGreaterThanOrEqual(100)
     expect(ORDER_COLUMN_WIDTHS.payTime).toBeGreaterThanOrEqual(100)
+  })
+})
+
+/**
+ * 订单列表 - 富余宽度怎么分（MTM-168）
+ *
+ * 1440 窗口下「深圳大冰熊科技有限公司」这种 11 个字的商户名会被截成「深圳大冰熊科技有…」，
+ * 而同一行的订单号列右边空着五十多像素没人用——富余宽度被 Element Plus 按 min-width
+ * 比例平摊掉了。现在改成按需分配：先把订单号列喂饱，剩下的全给商户名。
+ *
+ * 下面这些像素数都是拿 Chromium 实测出来的，不是估的：
+ *   - 列宽 = 文字宽度 + 24（左右各 10px 单元格内边距 + 表格自身占的 4px）
+ *   - 平台订单号 FP+20 位数字（12px 等宽）= 163px
+ *   - 「商户单号 SHOP-ORDER-20260819-000001」= 231px
+ *   - 14px 下一个汉字正好 14px，11 个字的商户名 = 154px
+ */
+describe('订单列表 - 窗口变宽时富余宽度怎么分', () => {
+  /** 某个窗口宽度下，表格实际能用多少像素（跟 TABLE_WIDTH_AT_1280 同一套算法） */
+  const tableWidthAt = (viewport) => viewport - 220 - 40 - 40 - 6
+
+  const CELL_PADDING = 24
+  const ORDER_NO_TEXT = 163
+  const OUT_TRADE_NO_TEXT = 231
+  const ELEVEN_CJK_CHARS = 11 * 14
+
+  it('基准宽正好用满 1280 能给的宽度，一格不多一格不少', () => {
+    // 少了浪费，多了横向滚动。基准值就是 1280 这一档的最优解。
+    expect(totalColumnWidth()).toBe(TABLE_WIDTH_AT_1280)
+  })
+
+  it('最窄的 1280 下订单号也必须完整显示，这是不能让的一条', () => {
+    const cols = resolveColumnWidths(tableWidthAt(1280))
+    expect(cols.orderNo).toBeGreaterThanOrEqual(ORDER_NO_TEXT + CELL_PADDING)
+  })
+
+  it('1440 下订单号列吃饱：平台订单号和商户单号两行都完整显示', () => {
+    const cols = resolveColumnWidths(tableWidthAt(1440))
+    expect(cols.orderNo).toBe(ORDER_COLUMN_CAPS.orderNo)
+    expect(cols.orderNo).toBeGreaterThanOrEqual(OUT_TRADE_NO_TEXT + CELL_PADDING)
+  })
+
+  it('1440 下 11 个字的商户名不再被截断', () => {
+    const cols = resolveColumnWidths(tableWidthAt(1440))
+    expect(cols.merchant - CELL_PADDING).toBeGreaterThanOrEqual(ELEVEN_CJK_CHARS)
+  })
+
+  it('富余宽度先补商户名、再补订单号副行，谁都不会超过自己吃得下的上限', () => {
+    // 只多一点点的时候：全进商户名（订单号的硬要求在基准宽就已经满足了）
+    const tiny = resolveColumnWidths(TABLE_WIDTH_AT_1280 + 20)
+    expect(tiny.merchant).toBe(ORDER_COLUMN_WIDTHS.merchant + 20)
+    expect(tiny.orderNo).toBe(ORDER_COLUMN_WIDTHS.orderNo)
+
+    // 商户名补到"11 个字看得全"之后，接着补订单号的副行
+    const roomy = resolveColumnWidths(TABLE_WIDTH_AT_1280 + 100)
+    expect(roomy.merchant).toBe(ELEVEN_CJK_CHARS + CELL_PADDING)
+    expect(roomy.orderNo).toBeGreaterThan(ORDER_COLUMN_WIDTHS.orderNo)
+    expect(roomy.orderNo).toBeLessThanOrEqual(ORDER_COLUMN_CAPS.orderNo)
+
+    // 谁都不会超过自己的上限，除非两边都吃饱了
+    expect(roomy.merchant).toBeLessThanOrEqual(ORDER_COLUMN_CAPS.merchant)
+  })
+
+  it('超宽屏下两列都吃饱了就对半分，表格右边不留白', () => {
+    const wide = tableWidthAt(1920)
+    const cols = resolveColumnWidths(wide)
+    expect(cols.orderNo).toBeGreaterThanOrEqual(ORDER_COLUMN_CAPS.orderNo)
+    expect(cols.merchant).toBeGreaterThanOrEqual(ORDER_COLUMN_CAPS.merchant)
+    expect(totalColumnWidth(cols)).toBe(wide)
+  })
+
+  it('任何宽度下所有列加起来都刚好铺满表格，既不横向滚动也不留白', () => {
+    // 表格宽度是连续变化的（拖窗口、收侧边栏都会变），随便取一批值都得成立
+    for (const viewport of [1280, 1366, 1440, 1536, 1600, 1680, 1920, 2560]) {
+      const width = tableWidthAt(viewport)
+      expect(totalColumnWidth(resolveColumnWidths(width))).toBe(width)
+    }
+  })
+
+  it('比 1280 还窄的时候退回基准宽，不会把订单号压得更小', () => {
+    // 再窄就只能横向滚动了，但基准宽是底线，订单号不许因此被截
+    const cols = resolveColumnWidths(tableWidthAt(1024))
+    expect(cols).toEqual(ORDER_COLUMN_WIDTHS)
+    expect(totalColumnWidth(cols)).toBe(TABLE_WIDTH_AT_1280)
   })
 })
