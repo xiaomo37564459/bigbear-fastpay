@@ -103,10 +103,20 @@ chmod 640 /etc/fastpay/fastpay-server.env
 
 ```bash
 # 0. 【只有本次或后续版本带迁移脚本时才做】先备份库、再跑迁移
-#    - 备份放本地，别放到 /opt/fastpay 里，免得占空间和被后续部署覆盖
-ssh root@150.158.99.251 \
-  'PGPASSWORD=$DB_PASSWORD pg_dump -h <数据库host> -U <用户> -d fastpay -F c' \
-  > /path/to/backups/fastpay-$(date +%F).dump
+#    备份统一放服务器的 /root/fastpay-backups/（不要放 /opt/fastpay，会被后续部署覆盖）。
+#    连接参数直接从 env 文件读，不要在命令行里写明文密码。
+ssh root@150.158.99.251 '
+  set -a; . /etc/fastpay/fastpay-server.env; set +a
+  export PGPASSWORD="$DB_PASSWORD"
+  TS=$(date +%Y%m%d-%H%M%S)
+  mkdir -p /root/fastpay-backups
+  pg_dump -h 10.0.0.11 -p 5432 -U "$DB_USERNAME" -d fastpay -F c \
+    -f /root/fastpay-backups/fastpay-${TS}-before-<本次版本>.dump
+  cp -a /opt/fastpay/fastpay-server-1.0.0.jar /root/fastpay-backups/fastpay-server-1.0.0.jar.pre-<本次版本>-${TS}
+  tar -czf /root/fastpay-backups/www-pre-<本次版本>-${TS}.tar.gz -C /opt/fastpay/www .
+  # 备份完先验一下能读，别等到要回退时才发现是坏的
+  pg_restore -l /root/fastpay-backups/fastpay-${TS}-before-<本次版本>.dump | grep -c "TABLE DATA"
+'
 
 # 传本次要跑的迁移脚本（下面示例是 V1.1，如果这版没有迁移就跳过这一步）
 scp fastpay-server/src/main/resources/db/migration/V1_1__admin_account_management_pg.sql \
@@ -146,10 +156,13 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 ```
 
 > 💡 **忘了跑迁移脚本会怎样？**
-> 从 1.1 版本起，后端启动时会自检 `fp_admin` 表结构。如果发现缺 `token_version` 列，会**直接启动失败**并在日志里指名要跑哪个脚本。宁可服务不起来（`systemctl status` 立刻报红，运维当场就知道），也不要服务起来了但一登录就 500 —— 后者要等真实用户来投诉才能发现。
+> 从 `v1.2.0` 起，后端启动时会自检 `fp_admin` 表结构。如果发现缺 `token_version` 列，会**直接启动失败**并在日志里指名要跑哪个脚本。宁可服务不起来（`systemctl status` 立刻报红，运维当场就知道），也不要服务起来了但一登录就 500 —— 后者要等真实用户来投诉才能发现。
 > 出现"启动失败 + 日志提示缺列"时，回去补跑 0 步骤，再重启即可，**不要**去改 `application-prod.yml` 或 jar。
 
-**这一版（1.1）的迁移脚本清单**：
+> 📌 **别把两套编号搞混**：`v1.2.0` 是**程序的发布版本号**（git tag），`V1_1` 是**数据库结构的版本号**（迁移脚本文件名）。
+> 两者不是一一对应的 —— 有的程序版本不带数据库变更，就没有对应的迁移脚本。看部署要跑哪个脚本，以下面这张表和 `db/migration/` 目录为准。
+
+**`v1.2.0` 需要执行的迁移脚本清单**：
 
 | 数据库 | 脚本 | 做了什么 |
 | --- | --- | --- |
@@ -187,7 +200,7 @@ tail -n 200 /opt/fastpay/logs/fastpay-server.log   # 应用日志
 | `Could not resolve placeholder 'fastpay.jwt.secret'` | profile 没生效 | 检查 env 文件里有没有 `SPRING_PROFILES_ACTIVE=prod` |
 | `Could not resolve placeholder 'DB_URL'` | 环境变量没读到 | 检查 `/etc/fastpay/fastpay-server.env` 和它的权限 |
 | `password authentication failed` | 数据库账号密码不对 | 核对 env 文件里的 `DB_USERNAME` / `DB_PASSWORD` |
-| `fp_admin 表缺少 token_version 列` | 数据库还是老版结构，缺 1.1 迁移 | 补跑第三节 0 步骤里的迁移脚本，再重启后端 |
+| `fp_admin 表缺少 token_version 列` | 数据库还是老版结构，缺 `V1_1` 迁移 | 补跑第三节 0 步骤里的迁移脚本，再重启后端 |
 | `ClassNotFoundException: org.apache.commons.lang3.StringUtils` | jar 打漏了依赖 | 见下面「已知坑」 |
 
 服务配了自动重启（`Restart=always`，5 秒后重试），进程被杀会自己起来；服务器重启也会自动启动（`systemctl is-enabled` 是 `enabled`）。
@@ -203,6 +216,14 @@ ssh root@150.158.99.251 '
 ```
 
 前端回退：把上一个版本的 `dist` 重新解压覆盖即可。
+
+> ⚠️ **回退时数据库要不要一起退回去？不用，也不要退。**
+> 迁移脚本（比如 1.2 版本的 `V1_1__admin_account_management_pg.sql`）加的列，**旧版本 jar 完全不受影响**，留着就行。
+> 原因：MyBatis 生成的 SQL 是按实体类逐个列出字段名的，表里多出来一列它根本不会去读。
+> 这一条 2026-08-19 上线 1.2.0 时实测过：迁移脚本执行完、还没换 jar 的时候，仍在跑的旧版本 jar 登录接口返回 `code:200`，日志无异常。
+> **所以回退 = 只换 jar + 换前端，10 分钟内能完成，不需要动数据库。**
+> 反过来，如果手贱把列删了，再想滚回新版本就得重新跑一次迁移脚本，纯属自找麻烦。
+> 只有确认要长期停留在旧版本、且要彻底清理时才考虑删列 —— 那种情况先从 `/root/fastpay-backups/` 里的整库备份恢复，别手工 `DROP COLUMN`。
 
 **生产环境禁止直接改服务器上的代码或配置文件来"临时修一下"。** 要改就改仓库、重新发版。
 
@@ -284,7 +305,7 @@ nginx: [emerg] unknown "connection_upgrade" variable
 2. **`fastpay-merchant` 依赖 `less`。**
    支付页和支付结果页用了 `lang="less"` 的样式，`package.json` 里必须保留 `less` 这个 devDependency，否则 `npm run build` 直接失败。
 
-3. **首次部署时，管理员账号密码从哪来。**（1.1 起，公开仓库里不再有默认的 `admin/123456`）
+3. **首次部署时，管理员账号密码从哪来。**（`v1.2.0` 起，公开仓库里不再有默认的 `admin/123456`）
    - 生产 yml 里只配了 `FASTPAY_ADMIN_INITIAL_USERNAME`（默认 `admin`），**故意不设 `FASTPAY_ADMIN_INITIAL_PASSWORD`**。
    - 首次启动、库里没有任何管理员时，`InitConfig` 会随机生成一个 16 位密码，明文只写到 warn 日志里一次，形如：
      ```
