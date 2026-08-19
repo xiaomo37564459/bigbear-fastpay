@@ -64,8 +64,8 @@ CREATE TABLE fp_merchant (
     contact_email VARCHAR(100) DEFAULT NULL,
     api_key VARCHAR(64) NOT NULL,
     api_secret VARCHAR(64) NOT NULL,
-    notify_url VARCHAR(255) DEFAULT NULL,
-    return_url VARCHAR(255) DEFAULT NULL,
+    notify_url VARCHAR(2000) DEFAULT NULL,
+    return_url VARCHAR(2000) DEFAULT NULL,
     total_amount DECIMAL(12,2) DEFAULT 0.00,
     total_count INT DEFAULT 0,
     status SMALLINT DEFAULT 1,
@@ -237,8 +237,8 @@ CREATE TABLE fp_pay_order (
     pay_amount DECIMAL(10,2) DEFAULT NULL,
     subject VARCHAR(200) NOT NULL,
     status SMALLINT DEFAULT 0,
-    notify_url VARCHAR(255) DEFAULT NULL,
-    return_url VARCHAR(255) DEFAULT NULL,
+    notify_url VARCHAR(2000) DEFAULT NULL,
+    return_url VARCHAR(2000) DEFAULT NULL,
     notify_status SMALLINT DEFAULT 0,
     notify_count INT DEFAULT 0,
     last_notify_time TIMESTAMP DEFAULT NULL,
@@ -246,6 +246,7 @@ CREATE TABLE fp_pay_order (
     expire_time TIMESTAMP DEFAULT NULL,
     client_ip VARCHAR(50) DEFAULT NULL,
     ext_param TEXT,
+    order_source VARCHAR(20) NOT NULL DEFAULT 'native',
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_order_no UNIQUE (order_no)
@@ -281,6 +282,7 @@ COMMENT ON COLUMN fp_pay_order.pay_time IS '支付时间（用户完成支付的
 COMMENT ON COLUMN fp_pay_order.expire_time IS '过期时间（订单超过此时间未支付将自动关闭）';
 COMMENT ON COLUMN fp_pay_order.client_ip IS '客户端IP地址（发起支付请求的客户端IP）';
 COMMENT ON COLUMN fp_pay_order.ext_param IS '扩展参数（JSON格式，用于存储额外信息）';
+COMMENT ON COLUMN fp_pay_order.order_source IS '订单来源：native-原生FastPay接口，epay-彩虹易支付协议接口；回调时按来源发对应格式';
 COMMENT ON COLUMN fp_pay_order.create_time IS '创建时间';
 COMMENT ON COLUMN fp_pay_order.update_time IS '更新时间';
 

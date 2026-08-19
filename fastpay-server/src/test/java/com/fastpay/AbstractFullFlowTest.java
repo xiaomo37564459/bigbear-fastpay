@@ -2,9 +2,11 @@ package com.fastpay;
 
 import com.fastpay.service.PayNotifyService;
 import com.fastpay.service.PayOrderService;
+import com.fastpay.util.EpaySignUtil;
 import com.fastpay.util.SignUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -19,20 +21,29 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import javax.sql.DataSource;
+import java.io.OutputStream;
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * 支付系统端到端主流程测试，MySQL 和 PostgreSQL 各跑一遍同一套步骤（两个子类分别提供真实数据库）：
@@ -230,6 +241,196 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
+    @Order(9)
+    void step9_epayMapiCreatesOrderWithEpaySource() throws Exception {
+        // sub2api 视角：POST /mapi.php，签名用易支付协议
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("pid", merchantNo);
+        params.put("out_trade_no", "EPAY0001");
+        params.put("type", "wxpay");
+        params.put("name", "epay 测试商品");
+        params.put("money", "1.23");
+        params.put("notify_url", "http://127.0.0.1:1/mock-notify"); // 本步不校验回调，随便填
+        params.put("return_url", "http://example.com/back");
+        params.put("clientip", "127.0.0.1");
+        String sign = EpaySignUtil.generateSign(params, merchantApiSecret);
+        params.put("sign", sign);
+        params.put("sign_type", "MD5");
+
+        JsonNode resp = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
+        assertThat(resp.get("code").asInt()).isEqualTo(1);
+        String epayTradeNo = resp.get("trade_no").asText();
+        assertThat(epayTradeNo).isNotBlank();
+        assertThat(resp.get("payurl").asText()).contains(epayTradeNo);
+
+        // 数据库里这单必须是 order_source=epay，回调走 GET 格式
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT order_source, notify_url FROM fp_pay_order WHERE order_no = ?")) {
+            ps.setString(1, epayTradeNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getString("order_source")).isEqualTo("epay");
+                assertThat(rs.getString("notify_url")).isEqualTo("http://127.0.0.1:1/mock-notify");
+            }
+        }
+    }
+
+    @Test
+    @Order(10)
+    void step10_epayMapiRejectsBadSign() throws Exception {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("pid", merchantNo);
+        params.put("out_trade_no", "EPAY_BAD");
+        params.put("type", "wxpay");
+        params.put("name", "bad sign");
+        params.put("money", "0.01");
+        params.put("notify_url", "http://x/notify");
+        params.put("sign", "00000000000000000000000000000000");
+        params.put("sign_type", "MD5");
+
+        JsonNode resp = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
+        assertThat(resp.get("code").asInt()).isEqualTo(-1);
+        assertThat(resp.get("msg").asText()).contains("签名");
+    }
+
+    @Test
+    @Order(11)
+    void step11_epaySubmitRedirectsToPayPage() throws Exception {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("pid", merchantNo);
+        params.put("out_trade_no", "EPAY0002");
+        params.put("type", "wxpay");
+        params.put("name", "submit 测试");
+        params.put("money", "2.34");
+        params.put("notify_url", "http://x/notify2");
+        params.put("return_url", "http://example.com/ok");
+        String sign = EpaySignUtil.generateSign(params, merchantApiSecret);
+        params.put("sign", sign);
+        params.put("sign_type", "MD5");
+
+        MockHttpServletRequestBuilder request = post("/submit.php")
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED);
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            request = request.param(e.getKey(), e.getValue());
+        }
+        MvcResult r = mockMvc.perform(request)
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+        String location = r.getResponse().getHeader("Location");
+        assertThat(location).contains("/pay/FP");
+    }
+
+    @Test
+    @Order(12)
+    void step12_epayApiOrderQueryReturnsStatus() throws Exception {
+        // 上面 EPAY0001 已下单但没支付，查询应返回 status=0
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("pid", merchantNo);
+        params.put("out_trade_no", "EPAY0001");
+        String sign = EpaySignUtil.generateSign(params, merchantApiSecret);
+        params.put("sign", sign);
+        params.put("sign_type", "MD5");
+
+        MockHttpServletRequestBuilder request = get("/api.php").param("act", "order");
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            request = request.param(e.getKey(), e.getValue());
+        }
+        MvcResult r = mockMvc.perform(request).andReturn();
+        JsonNode resp = objectMapper.readTree(r.getResponse().getContentAsByteArray());
+        assertThat(resp.get("code").asInt()).isEqualTo(1);
+        assertThat(resp.get("out_trade_no").asText()).isEqualTo("EPAY0001");
+        assertThat(resp.get("status").asInt()).isEqualTo(0);
+        assertThat(resp.get("pid").asText()).isEqualTo(merchantNo);
+    }
+
+    @Test
+    @Order(12)
+    void step12b_epayApiRefundReturnsExplicitUnsupported() throws Exception {
+        // sub2api 二进制里硬编码了 /api.php?act=refund。本期不做退款，
+        // 但必须给一个"明确不支持"的响应，不能 404 / 500 让对方误以为网络异常
+        MvcResult get = mockMvc.perform(get("/api.php").param("act", "refund")).andReturn();
+        JsonNode getResp = objectMapper.readTree(get.getResponse().getContentAsByteArray());
+        assertThat(get.getResponse().getStatus()).isEqualTo(200);
+        assertThat(getResp.get("code").asInt()).isEqualTo(-1);
+        assertThat(getResp.get("msg").asText()).contains("退款");
+
+        // sub2api 可能用 POST（strings 里没标方法，两个方法都要接得住）
+        MvcResult post = mockMvc.perform(post("/api.php").param("act", "refund")).andReturn();
+        JsonNode postResp = objectMapper.readTree(post.getResponse().getContentAsByteArray());
+        assertThat(post.getResponse().getStatus()).isEqualTo(200);
+        assertThat(postResp.get("code").asInt()).isEqualTo(-1);
+        assertThat(postResp.get("msg").asText()).contains("退款");
+    }
+
+    @Test
+    @Order(13)
+    void step13_epaySourceOrderCallbackIsGetWithEpayFormat() throws Exception {
+        // 起一个本地 HTTP 服务捕获真实回调，验证：
+        //   1) 请求方法是 GET（不是 POST）
+        //   2) 查询串里带上 pid/trade_no/out_trade_no/type/money/trade_status/sign/sign_type
+        //   3) 签名能用易支付算法验证通过
+        BlockingQueue<CapturedRequest> captured = new ArrayBlockingQueue<>(4);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try {
+            server.createContext("/notify", exchange -> {
+                CapturedRequest req = new CapturedRequest();
+                req.method = exchange.getRequestMethod();
+                req.rawQuery = exchange.getRequestURI().getRawQuery();
+                captured.offer(req);
+                byte[] body = "success".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(body);
+                }
+            });
+            server.start();
+
+            int port = server.getAddress().getPort();
+            String notifyUrl = "http://127.0.0.1:" + port + "/notify";
+
+            // 下一笔易支付订单，notify_url 指向本地捕获服务
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("pid", merchantNo);
+            params.put("out_trade_no", "EPAY_CB01");
+            params.put("type", "wxpay");
+            params.put("name", "callback flow");
+            params.put("money", "3.45");
+            params.put("notify_url", notifyUrl);
+            String sign = EpaySignUtil.generateSign(params, merchantApiSecret);
+            params.put("sign", sign);
+            params.put("sign_type", "MD5");
+
+            JsonNode create = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
+            assertThat(create.get("code").asInt()).isEqualTo(1);
+            String epayOrderNo = create.get("trade_no").asText();
+
+            // 用管理员权限手动确认支付，触发异步回调
+            postJson("/api/admin/order/" + epayOrderNo + "/confirm", adminToken, Map.of());
+
+            CapturedRequest cb = captured.poll(15, TimeUnit.SECONDS);
+            assertThat(cb).as("在 15s 内应收到易支付回调").isNotNull();
+            assertThat(cb.method).isEqualTo("GET");
+            assertThat(cb.rawQuery).isNotBlank();
+
+            Map<String, String> parsed = parseQuery(cb.rawQuery);
+            assertThat(parsed.get("pid")).isEqualTo(merchantNo);
+            assertThat(parsed.get("trade_no")).isEqualTo(epayOrderNo);
+            assertThat(parsed.get("out_trade_no")).isEqualTo("EPAY_CB01");
+            assertThat(parsed.get("type")).isEqualTo("wxpay");
+            assertThat(parsed.get("money")).isEqualTo("3.45");
+            assertThat(parsed.get("trade_status")).isEqualTo("TRADE_SUCCESS");
+            assertThat(parsed.get("sign_type")).isEqualTo("MD5");
+            assertThat(parsed.get("sign")).isNotBlank();
+
+            // 用易支付算法反过来校验签名，确认服务端签得对
+            assertThat(EpaySignUtil.verifySign(parsed, merchantApiSecret)).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @Order(8)
     void step8_listPaginationWorks() throws Exception {
         JsonNode merchantPage = dataOf(getJson("/api/admin/merchant/page?current=1&size=1", adminToken));
@@ -335,5 +536,35 @@ abstract class AbstractFullFlowTest {
 
     private JsonNode dataOf(MvcResult result) throws Exception {
         return objectMapper.readTree(result.getResponse().getContentAsByteArray()).get("data");
+    }
+
+    /**
+     * 用表单形式 POST 到易支付协议入口，不校验响应体的 code 字段（易支付协议返回的是 code=1，不是通用 200）
+     */
+    private MvcResult postForm(String url, Map<String, String> params) throws Exception {
+        MockHttpServletRequestBuilder request = post(url).contentType(MediaType.APPLICATION_FORM_URLENCODED);
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            request = request.param(e.getKey(), e.getValue());
+        }
+        return mockMvc.perform(request).andReturn();
+    }
+
+    private static Map<String, String> parseQuery(String rawQuery) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (rawQuery == null || rawQuery.isEmpty()) {
+            return out;
+        }
+        for (String pair : rawQuery.split("&")) {
+            int idx = pair.indexOf('=');
+            String k = idx >= 0 ? pair.substring(0, idx) : pair;
+            String v = idx >= 0 ? pair.substring(idx + 1) : "";
+            out.put(k, URLDecoder.decode(v, StandardCharsets.UTF_8));
+        }
+        return out;
+    }
+
+    private static class CapturedRequest {
+        String method;
+        String rawQuery;
     }
 }

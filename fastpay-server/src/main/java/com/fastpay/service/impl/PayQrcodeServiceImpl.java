@@ -186,6 +186,20 @@ public class PayQrcodeServiceImpl extends ServiceImpl<PayQrcodeMapper, PayQrcode
     }
 
     @Override
+    public PayQrcode getAvailableQrcodeAnyShop(Long merchantId, String payType) {
+        LambdaQueryWrapper<PayQrcode> wrapper = new LambdaQueryWrapper<PayQrcode>()
+                .eq(PayQrcode::getMerchantId, merchantId)
+                .eq(PayQrcode::getStatus, Constants.Status.ENABLED)
+                .orderByDesc(PayQrcode::getSortWeight)
+                .orderByAsc(PayQrcode::getTotalCount)
+                .last("LIMIT 1");
+        if (StringUtils.hasText(payType)) {
+            wrapper.eq(PayQrcode::getPayType, payType);
+        }
+        return this.getOne(wrapper);
+    }
+
+    @Override
     public PayQrcode getAvailableQrcode(Long merchantId, String shopNo, String payType) {
         final Shop shop = shopMapper.selectOne(new LambdaQueryWrapper<Shop>().eq(Shop::getShopNo, shopNo));
         if (shop == null) {
