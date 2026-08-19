@@ -1,20 +1,57 @@
 <template>
   <div class="profile-page">
-    <!-- 顶部资料卡：账号 / 昵称 / 最后登录 -->
+    <!-- 顶部资料卡：账号 / 昵称 / 最后登录
+         数据没回来之前走骨架屏，别让人以为账号信息丢了；失败了明确说一句并给重试按钮 -->
     <el-card class="profile-card" shadow="never">
-      <div class="profile-header">
-        <div class="avatar">
-          <el-icon :size="40"><User /></el-icon>
-        </div>
-        <div class="meta">
-          <div class="username">{{ profile.username || '—' }}</div>
-          <div class="nickname">{{ profile.nickname || '超级管理员' }}</div>
-          <div class="last-login">
-            上次登录：{{ lastLoginTimeText }}
-            <span v-if="lastLoginIpText"> · {{ lastLoginIpText }}</span>
+      <el-skeleton :loading="profileLoading" animated>
+        <template #template>
+          <div class="profile-loading" aria-busy="true" data-test="profile-loading">
+            <div class="profile-header">
+              <el-skeleton-item variant="circle" class="avatar-skeleton" />
+              <div class="meta">
+                <el-skeleton-item variant="h3" style="width: 180px; height: 22px" />
+                <el-skeleton-item variant="text" style="width: 108px; height: 14px; margin-top: 8px" />
+                <el-skeleton-item variant="text" style="width: 240px; height: 12px; margin-top: 8px" />
+              </div>
+            </div>
+            <div class="loading-tip">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              正在加载账号信息…
+            </div>
           </div>
-        </div>
-      </div>
+        </template>
+
+        <template #default>
+          <el-alert
+            v-if="profileError"
+            class="load-error"
+            type="warning"
+            show-icon
+            :closable="false"
+            title="账号信息没加载出来"
+            data-test="profile-error"
+          >
+            <div class="load-error-body">
+              <span>网络或服务暂时没响应。下面的改账号、改密码还能正常用。</span>
+              <el-button type="primary" link @click="loadProfile">重新加载</el-button>
+            </div>
+          </el-alert>
+
+          <div v-else class="profile-header" data-test="profile-ready">
+            <div class="avatar">
+              <el-icon :size="40"><User /></el-icon>
+            </div>
+            <div class="meta">
+              <div class="username">{{ profile.username || '—' }}</div>
+              <div class="nickname">{{ profile.nickname || '超级管理员' }}</div>
+              <div class="last-login">
+                上次登录：{{ lastLoginTimeText }}
+                <span v-if="lastLoginIpText"> · {{ lastLoginIpText }}</span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </el-skeleton>
     </el-card>
 
     <div class="two-column">
@@ -34,7 +71,16 @@
           @submit.prevent="submitUsername"
         >
           <el-form-item label="当前账号">
-            <el-input :model-value="profile.username" disabled />
+            <el-input
+              :model-value="currentUsernameText"
+              :placeholder="currentUsernamePlaceholder"
+              disabled
+              data-test="current-username"
+            >
+              <template v-if="profileLoading" #suffix>
+                <el-icon class="is-loading"><Loading /></el-icon>
+              </template>
+            </el-input>
           </el-form-item>
           <el-form-item label="新账号" prop="newUsername">
             <el-input
@@ -55,7 +101,12 @@
             />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" :loading="usernameSubmitting" @click="submitUsername">
+            <el-button
+              type="primary"
+              :loading="usernameSubmitting"
+              :disabled="profileLoading"
+              @click="submitUsername"
+            >
               保存新账号
             </el-button>
           </el-form-item>
@@ -152,6 +203,21 @@ const policy = reactive({
   description: '密码长度 8~64 位，必须同时包含字母和数字，且不能是 123456、admin123 这类常见弱口令'
 })
 const policyText = ref(policy.description)
+
+// 页面初始数据的加载状态。首屏默认就是"加载中"，避免在数据回来之前
+// 先把「当前账号」「上次登录」渲染成一个空占位符（看起来像数据丢了）。
+const profileLoading = ref(true)
+const profileError = ref(false)
+
+// 「当前账号」输入框：加载中和加载失败都不显示值，改用占位文案说明当前状态
+const currentUsernameText = computed(() =>
+  profileLoading.value || profileError.value ? '' : profile.username
+)
+const currentUsernamePlaceholder = computed(() => {
+  if (profileLoading.value) return '正在加载…'
+  if (profileError.value) return '没加载出来，点上方「重新加载」再试一次'
+  return ''
+})
 
 // 时间格式化：后端 LocalDateTime 默认走 ISO（yyyy-MM-ddTHH:mm:ss.SSSSSS），
 // 直接展示对管理员不友好，这里统一裁成秒的 yyyy-MM-dd HH:mm:ss。
@@ -278,21 +344,37 @@ const submitPassword = async () => {
 }
 
 // ---------- 页面初始化 ----------
-onMounted(async () => {
-  try {
-    const [profileRes, policyRes] = await Promise.all([
-      getAdminProfile(),
-      getPasswordPolicy()
-    ])
-    Object.assign(profile, profileRes.data || {})
-    if (policyRes && policyRes.data) {
-      Object.assign(policy, policyRes.data)
-      policyText.value = policyRes.data.description || policyText.value
-    }
-  } catch (err) {
-    console.error('加载账号资料失败:', err)
+/**
+ * 拉资料和密码规则。两个请求各算各的（allSettled）：
+ * 密码规则挂了不该把账号资料一起拖成"加载失败"，前端本来就有一份兜底规则文案。
+ */
+const loadProfile = async () => {
+  profileLoading.value = true
+  profileError.value = false
+  const [profileRes, policyRes] = await Promise.allSettled([
+    getAdminProfile(),
+    getPasswordPolicy()
+  ])
+
+  if (profileRes.status === 'fulfilled') {
+    Object.assign(profile, profileRes.value?.data || {})
+  } else {
+    // request 拦截器已经统一弹过错误提示，这里只负责把页面切到"加载失败"的样子
+    profileError.value = true
+    console.error('加载账号资料失败:', profileRes.reason)
   }
-})
+
+  if (policyRes.status === 'fulfilled' && policyRes.value?.data) {
+    Object.assign(policy, policyRes.value.data)
+    policyText.value = policyRes.value.data.description || policyText.value
+  } else if (policyRes.status === 'rejected') {
+    console.error('加载密码规则失败，继续用前端兜底文案:', policyRes.reason)
+  }
+
+  profileLoading.value = false
+}
+
+onMounted(loadProfile)
 </script>
 
 <style scoped>
@@ -343,14 +425,53 @@ onMounted(async () => {
   color: #9ca3af;
 }
 
+/* 加载中：骨架块的尺寸照着正常态摆，切换过来不跳动 */
+.avatar-skeleton {
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+}
+
+.loading-tip {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.load-error-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 两张卡片的标题高度要一致，下面的输入框才在同一条水平线上。
+   右侧「修改登录密码」的说明比左侧长、会折成两行，直接排版会把右侧表单整体压低约 17px。
+   这里让 .two-column 显式分成"标题行 + 表单行"两行，两张卡片各占这两行（subgrid），
+   标题行的高度由两张卡片里更高的那个决定，说明折不折行都不再影响表单起始位置。 */
 .two-column {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
   gap: 20px;
 }
 
 .section-card {
   border: 1px solid #ebeef5;
+  grid-row: span 2;
+  display: grid;
+  grid-template-rows: subgrid;
+}
+
+/* 老浏览器不支持 subgrid 时的兜底：给说明文字留出固定两行的高度 */
+@supports not (grid-template-rows: subgrid) {
+  .section-desc {
+    min-height: 34px;
+  }
 }
 
 /* 卡片标题：标题一行、说明另一行，宽度受限时说明自动折行、不会挤压标题。
@@ -381,9 +502,16 @@ onMounted(async () => {
   color: #9ca3af;
 }
 
+/* 窄屏改成上下排布，两张卡片不再并排，也就不需要对齐了 */
 @media (max-width: 1024px) {
   .two-column {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .section-card {
+    grid-row: auto;
+    display: block;
   }
 }
 </style>
