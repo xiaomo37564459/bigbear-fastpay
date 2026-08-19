@@ -24,5 +24,9 @@ rebel.xml
 node_modules
 dist
 
+# unplugin-auto-import / unplugin-vue-components 自动生成的类型声明，跟机器有关，不该进仓库
+auto-imports.d.ts
+components.d.ts
+
 # 数据库连接信息，不能进仓库
 PG.txt

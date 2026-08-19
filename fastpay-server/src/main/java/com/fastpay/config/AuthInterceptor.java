@@ -1,7 +1,10 @@
 package com.fastpay.config;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fastpay.common.BusinessException;
 import com.fastpay.common.Constants;
+import com.fastpay.entity.Admin;
+import com.fastpay.mapper.AdminMapper;
 import com.fastpay.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -20,9 +23,11 @@ import org.springframework.web.servlet.HandlerInterceptor;
 public class AuthInterceptor implements HandlerInterceptor {
 
     private final JwtUtil jwtUtil;
+    private final AdminMapper adminMapper;
 
-    public AuthInterceptor(JwtUtil jwtUtil) {
+    public AuthInterceptor(JwtUtil jwtUtil, AdminMapper adminMapper) {
         this.jwtUtil = jwtUtil;
+        this.adminMapper = adminMapper;
     }
 
     @Override
@@ -61,6 +66,26 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
         if (uri.startsWith("/api/merchant/") && !"merchant".equals(userType)) {
             throw BusinessException.forbidden("无权访问商户平台");
+        }
+
+        // 管理员令牌还要额外校验 tokenVersion，改密码/改账号后老 token 会在这里被拒
+        if ("admin".equals(userType)) {
+            Integer claimVersion = jwtUtil.getTokenVersion(token);
+            // 升级前签发的老 token 里没有 tokenVersion 字段，按 0 处理；数据库默认值也是 0，不会误踢
+            int currentClaim = claimVersion == null ? 0 : claimVersion;
+            Admin admin = adminMapper.selectOne(
+                    Wrappers.<Admin>lambdaQuery().select(Admin::getId, Admin::getStatus, Admin::getTokenVersion)
+                            .eq(Admin::getId, userId));
+            if (admin == null) {
+                throw BusinessException.unauthorized("账号不存在或已注销，请重新登录");
+            }
+            if (!Constants.Status.ENABLED.equals(admin.getStatus())) {
+                throw BusinessException.forbidden("账号已被禁用");
+            }
+            int dbVersion = admin.getTokenVersion() == null ? 0 : admin.getTokenVersion();
+            if (dbVersion != currentClaim) {
+                throw BusinessException.unauthorized("登录状态已失效，请使用新密码重新登录");
+            }
         }
 
         return true;

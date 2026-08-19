@@ -19,6 +19,38 @@ export function getDashboard() {
   return request.get('/admin/dashboard')
 }
 
+// ==================== 账号设置 ====================
+
+/**
+ * 获取当前登录管理员资料（不含密码）
+ */
+export function getAdminProfile() {
+  return request.get('/admin/profile')
+}
+
+/**
+ * 修改当前登录账号
+ * @param {{ newUsername: string, currentPassword: string }} data
+ */
+export function updateAdminUsername(data) {
+  return request.put('/admin/profile/username', data)
+}
+
+/**
+ * 修改当前管理员密码
+ * @param {{ oldPassword: string, newPassword: string, confirmPassword: string }} data
+ */
+export function updateAdminPassword(data) {
+  return request.put('/admin/profile/password', data)
+}
+
+/**
+ * 获取密码强度规则（用于前端提示，保持与后端口径一致）
+ */
+export function getPasswordPolicy() {
+  return request.get('/admin/profile/password-policy')
+}
+
 // ==================== 商户管理 ====================
 
 /**

@@ -60,6 +60,11 @@ public class Admin implements Serializable {
     private String lastLoginIp;
 
     /**
+     * 令牌版本号（每次改密码/改账号 +1，旧令牌通过 JWT 里的 tokenVersion 与这里比对失效）
+     */
+    private Integer tokenVersion;
+
+    /**
      * 创建时间
      */
     @TableField(fill = FieldFill.INSERT)

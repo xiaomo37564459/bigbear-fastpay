@@ -87,7 +87,11 @@
             </div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item @click="handleLogout">
+                <el-dropdown-item @click="handleProfile">
+                  <el-icon><Setting /></el-icon>
+                  账号设置
+                </el-dropdown-item>
+                <el-dropdown-item divided @click="handleLogout">
                   <el-icon><SwitchButton /></el-icon>
                   退出登录
                 </el-dropdown-item>
@@ -138,6 +142,11 @@ const userInfo = computed(() => {
 // 菜单选择
 const handleMenuSelect = (index) => {
   router.push(index)
+}
+
+// 进入账号设置
+const handleProfile = () => {
+  router.push('/profile')
 }
 
 // 退出登录

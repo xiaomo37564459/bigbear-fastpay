@@ -91,7 +91,8 @@ abstract class AbstractFullFlowTest {
     @Test
     @Order(1)
     void step1_adminCanLoginWithSeedAccount() throws Exception {
-        // db/init.sql 和 db/init-pg.sql 里都预置了 admin/123456 这个管理员账号
+        // 管理员账号不再由 SQL 脚本预置，改由后端 InitConfig 在启动时读 fastpay.admin.username / password
+        // 创建（见 application-dev.yml，dev 环境固定为 admin / 123456，方便测试）
         JsonNode data = dataOf(postJson("/api/admin/login", null,
                 Map.of("username", "admin", "password", "123456")));
 

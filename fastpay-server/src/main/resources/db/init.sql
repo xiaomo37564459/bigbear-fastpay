@@ -16,11 +16,12 @@ USE bigbear_fastpay;
 DROP TABLE IF EXISTS `fp_admin`;
 CREATE TABLE `fp_admin` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-    `username` VARCHAR(50) NOT NULL COMMENT '用户名（登录账号）',
+    `username` VARCHAR(100) NOT NULL COMMENT '用户名（登录账号，支持普通字符串或邮箱格式）',
     `password` VARCHAR(64) NOT NULL COMMENT '密码（MD5加密存储）',
     `nickname` VARCHAR(50) DEFAULT NULL COMMENT '昵称（显示名称）',
     `avatar` VARCHAR(255) DEFAULT NULL COMMENT '头像URL地址',
     `status` TINYINT DEFAULT 1 COMMENT '状态：0-禁用，1-启用',
+    `token_version` INT DEFAULT 0 COMMENT '令牌版本号（每次改密码/改账号 +1，用于让旧登录令牌失效）',
     `last_login_time` DATETIME DEFAULT NULL COMMENT '最后登录时间',
     `last_login_ip` VARCHAR(50) DEFAULT NULL COMMENT '最后登录IP地址',
     `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -179,11 +180,16 @@ CREATE TABLE `fp_pay_order` (
 -- =====================================================
 -- 初始化数据
 -- =====================================================
-
--- 插入默认管理员账号（用户名：admin，密码：123456）
-INSERT INTO `fp_admin` (`username`, `password`, `nickname`, `avatar`, `status`) 
-VALUES ('admin', 'e10adc3949ba59abbe56e057f20f883e', '超级管理员', '/static/avatar/admin.png', 1)
-ON DUPLICATE KEY UPDATE `nickname` = '超级管理员';
+--
+-- 说明：不再在此脚本里预置默认管理员账号（曾经的 admin / 123456 已经在公开仓库里
+-- 被搜到过，属于人尽皆知的默认凭证，见 MTM-149 问题一）。
+-- 管理员账号改由后端 InitConfig 在应用启动时按下面这套规则来准备：
+--   1. 如果 fp_admin 表里已经有账号，什么都不做；
+--   2. 表为空时：
+--      · fastpay.admin.username / fastpay.admin.password 都显式配了 → 用这一对；
+--      · 只配了用户名、没配密码（例如生产环境）→ 随机生成 16 位密码，明文打到 warn 日志里，
+--        运维在 systemd/journalctl 里拿一次、立刻登进后台改成自己的密码，然后就不能再拿到了。
+-- dev/测试用的默认凭证放在 application-dev.yml 里，不进这里。
 
 -- =====================================================
 -- 表结构说明

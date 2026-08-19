@@ -78,10 +78,13 @@ fastpay:
     # Token 有效期（小时）
     expire-hours: 12
   
-  # 管理员默认账号
+  # 管理员初始账号：只在数据库里没有任何管理员时用一次（首次部署）
+  # - username 可通过 FASTPAY_ADMIN_INITIAL_USERNAME 覆盖，默认 admin
+  # - password 故意不设默认值：不配置就在启动时随机生成一个 16 位密码，明文只写到 warn 日志里一次，
+  #   避免仓库/配置文件里出现任何人尽皆知的默认口令（MTM-149 问题一）
   admin:
-    username: fastpay
-    password: 123456@
+    username: ${FASTPAY_ADMIN_INITIAL_USERNAME:admin}
+    password: ${FASTPAY_ADMIN_INITIAL_PASSWORD:}
   
   # 支付配置
   pay:
