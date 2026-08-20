@@ -1,50 +1,52 @@
 <template>
   <div class="profile-page">
     <!-- 顶部资料卡：账号 / 昵称 / 最后登录
-         数据没回来之前走骨架屏，别让人以为账号信息丢了；失败了明确说一句并给重试按钮 -->
+         数据没回来之前走骨架屏，别让人以为账号信息丢了；失败了明确说一句并给重试按钮。
+         三种状态（加载中 / 正常 / 失败）都套同一个 .profile-state 高度容器，
+         切换的时候卡片高度不变，页面不会往上蹿一下。 -->
     <el-card class="profile-card" shadow="never">
       <el-skeleton :loading="profileLoading" animated>
         <template #template>
-          <div class="profile-loading" aria-busy="true" data-test="profile-loading">
-            <div class="profile-header">
-              <el-skeleton-item variant="circle" class="avatar-skeleton" />
-              <div class="meta">
-                <el-skeleton-item variant="h3" style="width: 180px; height: 22px" />
-                <el-skeleton-item variant="text" style="width: 108px; height: 14px; margin-top: 8px" />
-                <el-skeleton-item variant="text" style="width: 240px; height: 12px; margin-top: 8px" />
+          <div class="profile-state profile-header" aria-busy="true" data-test="profile-loading">
+            <el-skeleton-item variant="circle" class="avatar-skeleton" />
+            <div class="meta">
+              <el-skeleton-item variant="h3" class="line line-username" style="width: 180px" />
+              <el-skeleton-item variant="text" class="line line-nickname" style="width: 108px" />
+              <!-- 「正在加载」这句话就摆在"上次登录"那一行的位置上，
+                   它是正常态里本来就有的第三行，不是额外多出来的一行 -->
+              <div class="line line-last-login loading-tip">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                正在加载账号信息…
               </div>
-            </div>
-            <div class="loading-tip">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              正在加载账号信息…
             </div>
           </div>
         </template>
 
         <template #default>
-          <el-alert
-            v-if="profileError"
-            class="load-error"
-            type="warning"
-            show-icon
-            :closable="false"
-            title="账号信息没加载出来"
-            data-test="profile-error"
-          >
-            <div class="load-error-body">
-              <span>网络或服务暂时没响应。下面的改账号、改密码还能正常用。</span>
-              <el-button type="primary" link @click="loadProfile">重新加载</el-button>
-            </div>
-          </el-alert>
+          <div v-if="profileError" class="profile-state" data-test="profile-error-state">
+            <el-alert
+              class="load-error"
+              type="warning"
+              show-icon
+              :closable="false"
+              title="账号信息没加载出来"
+              data-test="profile-error"
+            >
+              <div class="load-error-body">
+                <span>网络或服务暂时没响应。下面的改账号、改密码还能正常用。</span>
+                <el-button type="primary" link @click="loadProfile">重新加载</el-button>
+              </div>
+            </el-alert>
+          </div>
 
-          <div v-else class="profile-header" data-test="profile-ready">
+          <div v-else class="profile-state profile-header" data-test="profile-ready">
             <div class="avatar">
               <el-icon :size="40"><User /></el-icon>
             </div>
             <div class="meta">
-              <div class="username">{{ profile.username || '—' }}</div>
-              <div class="nickname">{{ profile.nickname || '超级管理员' }}</div>
-              <div class="last-login">
+              <div class="line line-username username">{{ profile.username || '—' }}</div>
+              <div class="line line-nickname nickname">{{ profile.nickname || '超级管理员' }}</div>
+              <div class="line line-last-login last-login">
                 上次登录：{{ lastLoginTimeText }}
                 <span v-if="lastLoginIpText"> · {{ lastLoginIpText }}</span>
               </div>
@@ -389,7 +391,12 @@ onMounted(loadProfile)
   margin-bottom: 20px;
 }
 
-.profile-header {
+/* 三种状态共用的高度容器。
+   加载中 / 正常 / 失败切换时，卡片高度必须一动不动——之前加载态比正常态高 28px，
+   数据一回来整页就往上蹿一下（原来这里注释写的是"不跳动"，但实测是跳的）。
+   高度锁在 76px：头像 72px 放得下，三行文字加起来也正好 76px（28+4 / 20+6 / 18）。 */
+.profile-state {
+  min-height: 76px;
   display: flex;
   align-items: center;
   gap: 20px;
@@ -407,38 +414,65 @@ onMounted(loadProfile)
   flex-shrink: 0;
 }
 
+/* meta 里的三行：行高写死，加载态的骨架块照着同一套尺寸摆。
+   两个状态的行数、行高、行间距完全一致，所以总高度必然相等。 */
+.profile-header .meta .line {
+  display: block;
+}
+
+.profile-header .meta .line-username {
+  height: 28px;
+  line-height: 28px;
+  margin-bottom: 4px;
+}
+
+.profile-header .meta .line-nickname {
+  height: 20px;
+  line-height: 20px;
+  margin-bottom: 6px;
+}
+
+.profile-header .meta .line-last-login {
+  height: 18px;
+  line-height: 18px;
+}
+
 .profile-header .meta .username {
   font-size: 20px;
   font-weight: 600;
   color: #1f2937;
-  margin-bottom: 4px;
 }
 
 .profile-header .meta .nickname {
   font-size: 14px;
   color: #6b7280;
-  margin-bottom: 6px;
 }
 
 .profile-header .meta .last-login {
   font-size: 12px;
   color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* 加载中：骨架块的尺寸照着正常态摆，切换过来不跳动 */
 .avatar-skeleton {
   width: 72px;
   height: 72px;
   flex-shrink: 0;
 }
 
+/* 「正在加载账号信息…」占的就是"上次登录"那一行，不额外撑高 */
 .loading-tip {
-  margin-top: 12px;
   font-size: 12px;
   color: #9ca3af;
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.load-error {
+  width: 100%;
 }
 
 .load-error-body {

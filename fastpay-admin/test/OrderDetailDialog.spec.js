@@ -167,6 +167,17 @@ describe('订单详情弹窗', () => {
     wrapper.unmount()
   })
 
+  it('大额订单的金额完整显示，不会被截掉尾数（MTM-168）', async () => {
+    // 假数据原来只有 ¥199.00 这一种小额，大额金额的显示一直没被测到
+    const bigAmount = { ...row, amount: '888888.88' }
+    const loader = vi.fn().mockResolvedValue({ code: 200, data: { ...detail, payAmount: '888888.88' } })
+    const wrapper = mountDialog({ row: bigAmount, loader })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('888888.88')
+    wrapper.unmount()
+  })
+
   it('每次重新打开都会重新拉一次详情，不会显示上一笔订单的残留', async () => {
     const loader = vi.fn().mockResolvedValue({ code: 200, data: detail })
     const wrapper = mountDialog({ loader, modelValue: false })

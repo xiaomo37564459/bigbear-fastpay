@@ -17,6 +17,13 @@ spring:
   #   DB_USERNAME=<用户名>
   #   DB_PASSWORD=<密码>
   # DB_URL / DB_USERNAME / DB_PASSWORD 故意不设默认值：没配就启动失败，避免连错库或用默认密码上线。
+  #
+  # 关于时区（MTM-187）：
+  #   FastPayApplication 已把 JVM 默认时区钉死到 Asia/Shanghai。连 MySQL 时 DB_URL 必须带上
+  #   serverTimezone=Asia/Shanghai（例：
+  #   jdbc:mysql://.../bigbear_fastpay?...&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true）
+  #   以保持 JVM 侧和驱动侧的时区一致，否则会出现「订单超时不关单」这类时差偏差。
+  #   连 PostgreSQL 无需额外参数，pgjdbc 直接跟着 JVM 默认时区走。
   datasource:
     driver-class-name: ${DB_DRIVER:org.postgresql.Driver}
     url: ${DB_URL}
