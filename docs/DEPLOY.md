@@ -115,7 +115,9 @@ chmod 640 /etc/fastpay/fastpay-server.env
 每次发新版本，按下面顺序走。**如果这一版包含数据库结构变更（`fastpay-server/src/main/resources/db/migration/` 下有新的 `Vx_x__*.sql`），必须先跑迁移脚本再重启后端**，否则后端能起来但一登录就 500，谁都进不去。
 
 ```bash
-# 0. 【只有本次或后续版本带迁移脚本时才做】先备份库、再跑迁移
+# 0. 先备份，再跑迁移
+#    ⚠️ 备份（紧接着下面这一段 ssh）每次发版都要做，跟这一版有没有迁移脚本无关。
+#       只有再往下的"传迁移脚本""跑迁移"那两段，才是"这一版带迁移才做"。
 #    备份统一放服务器的 /root/fastpay-backups/（不要放 /opt/fastpay，会被后续部署覆盖）。
 #    地址/账号/密码全部从 env 文件读 —— 命令里不出现任何真实值，可以直接照抄。
 #    下面的 VER 换成本次要发的版本号（例如 v1.2.0），其余原样。
@@ -143,7 +145,8 @@ ssh root@150.158.99.251 '
 scp fastpay-server/src/main/resources/db/migration/V1_1__admin_account_management_pg.sql \
     root@150.158.99.251:/root/fastpay-ops/
 
-# 跑迁移（生产用 PostgreSQL 走 pg 版本；如果哪台机器用的是 MySQL，换 mysql 版本）
+# 跑迁移（这版没有迁移就跳过这一步）
+# 生产用 PostgreSQL 走 pg 版本；如果哪台机器用的是 MySQL，换 mysql 版本
 # 同样从 env 读连接信息；ON_ERROR_STOP=1 保证出错立刻停，不会跑一半还往下走
 ssh root@150.158.99.251 '
   set -a; . /etc/fastpay/fastpay-server.env; set +a
@@ -184,29 +187,31 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 
 > 💡 **忘了跑 `v1.2.0` 那个 `V1_1` 会怎样？**
 > 从 `v1.2.0` 起，后端启动时会自检 `fp_admin` 表结构。如果发现缺 `token_version` 列，会**直接启动失败**并在日志里指名要跑哪个脚本。宁可服务不起来（`systemctl status` 立刻报红，运维当场就知道），也不要服务起来了但一登录就 500 —— 后者要等真实用户来投诉才能发现。
-> 出现"启动失败 + 日志提示缺列"时，回去补跑 0 步骤，再重启即可，**不要**去改 `application-prod.yml` 或 jar。
+> 出现"启动失败 + 日志提示缺列"时，回去补跑 0 步骤里的迁移那两段，再重启即可，**不要**去改 `application-prod.yml` 或 jar。
 
 > 📌 **别把两套编号搞混**：`v1.2.0` 是**程序的发布版本号**（git tag），`V1_1` 是**数据库结构的版本号**（迁移脚本文件名）。
-> 两者不是一一对应的 —— 有的程序版本不带数据库变更，就没有对应的迁移脚本。看部署要跑哪个脚本，以下面这张表和 `db/migration/` 目录为准。
+> 两者不是一一对应的 —— 有的程序版本不带数据库变更，就没有对应的迁移脚本。看部署要跑哪个脚本，以下面这张表和 `fastpay-server/src/main/resources/db/migration/` 目录为准。
 
 ### 哪个版本要跑迁移 —— 发版前先查这张表
 
 **按你「这次要发的版本号」查这一行**，看它有没有新增脚本：
 
+> 表里只写文件名。**脚本都在仓库的 `fastpay-server/src/main/resources/db/migration/` 下面**，`scp` 的时候要带上这一整段路径（第三节的命令里是全路径，可以直接照抄）。
+
 | 发布版本 | 这一版新增的迁移脚本 | 这个脚本做了什么 |
 | --- | --- | --- |
-| `v1.0.0` | **无** | 上线基线，库是用 `db/init-pg.sql` 直接建的 |
+| `v1.0.0` | **无** | 上线基线，库是用 `fastpay-server/src/main/resources/db/init-pg.sql` 直接建的 |
 | `v1.1.0` | **无** | 只修了订单详情显示，不动表结构 |
-| `v1.2.0` | `db/migration/V1_1__admin_account_management_pg.sql` | `fp_admin.username` 放宽到 100 字符；新增 `token_version INT DEFAULT 0` 列 |
-| `v1.3.0` | **无** | 只修了商户订单查询的筛选参数，不动表结构 |
-| `v1.4.0` | `db/migration/V1_2__password_hash_bcrypt_pg.sql` | `fp_admin.password`、`fp_merchant.password` 从 64 放宽到 255 字符，容纳 bcrypt |
+| `v1.2.0` | `V1_1__admin_account_management_pg.sql` | `fp_admin.username` 放宽到 100 字符；新增 `token_version INT DEFAULT 0` 列 |
+| `v1.3.0` | **无** | 这一版都是文档和前端改动，不动表结构 |
+| `v1.4.0` | `V1_2__password_hash_bcrypt_pg.sql` | `fp_admin.password`、`fp_merchant.password` 从 64 放宽到 255 字符，容纳 bcrypt |
 
 几条配套说明：
 
-- **表里写「无」的版本，第三节的 0 步骤和传脚本、跑脚本那两段整个跳过**，直接从传 jar 开始。备份还是要做。
+- **表里写「无」的版本**：第三节 0 步骤里「传本次要跑的迁移脚本」「跑迁移」那两段跳过；**0 步骤开头那段备份（备份库 + 备份 jar + 备份前端）照做**，做完直接跳到第 1 步传 jar。
 - **本地或老装机用 MySQL 的**：把文件名里的 `_pg` 换成 `_mysql`，两个文件内容等价，只是数据库方言不同。
-- **跨版本升级**（比如线上还停在 `v1.2.0`，这次直接发 `v1.4.0`）：把中间每一版「新增」那一列的脚本**按版本从小到大依次跑一遍**。所有脚本都是幂等的（`IF NOT EXISTS`、只改字段宽度、**不动任何一行已有数据**），已经跑过的再跑一次不会中断部署，也不会改坏数据。
-- 跑法就是第三节 0 步骤里那两段命令，把 `scp` 和 `psql` 里的文件名换成本次要跑的即可，其余照抄。
+- **跨版本升级**（比如线上还停在 `v1.2.0`，这次直接发 `v1.4.0`）：把中间每一版「新增」那一列的脚本**按版本从小到大依次跑一遍**。所有脚本重复跑都不会出问题（用了 `IF NOT EXISTS`），已经跑过的再跑一次不会中断部署。除了 `V1_1` 里有一句把新加的 `token_version` 列的空值补成 0（`UPDATE ... WHERE token_version IS NULL`，重复跑也没事），其余都只是放宽字段宽度，**不动任何已有数据**。
+- 跑法就是第三节 0 步骤里「传本次要跑的迁移脚本」「跑迁移」那两段命令，把 `scp` 和 `psql` 里的文件名换成本次要跑的即可，其余照抄。
 
 > ✅ **这张表要是没跟上，用命令现查，别猜。**
 > 线上现在跑的是 `<旧版本>`、这次要发 `<新版本>`，那么下面这条命令列出来的，就是本次要跑的全部脚本：
@@ -229,7 +234,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 > 在 Windows 上打的 `tar` 包不带 Unix 权限位，解压到 Linux 上会变成 `777` / `666` —— 也就是**这台机器上任何账号都能改支付页和登录页**。改掉之后页面看起来一模一样，但商户输入的账号密码会被送到别人手里，非常难发现。
 > 页面目录 `755`、文件 `644` 就够了（nginx 只需要读）。改完可以用 `find /opt/fastpay -perm /o+w | wc -l` 确认结果是 `0`。
 
-**升级前先留一份能退回去的东西**：
+**升级前先留一份能退回去的东西。** 正经的完整备份就是上面 0 步骤开头那段（库 + jar + 前端，还会验一下备份读不读得出来），**每次发版都跑它**，别拿下面这条顶替。
+
+下面这条只备份 jar，是给「临时只换了个 jar、库和前端都没碰」这种小改动兜底用的最低限度：
 
 ```bash
 ssh root@150.158.99.251 'cp /opt/fastpay/fastpay-server-1.0.0.jar /opt/fastpay/fastpay-server-1.0.0.jar.bak-$(date +%F)'
