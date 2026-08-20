@@ -1,0 +1,180 @@
+# 每个 PR 自动跑一遍：先把当天最新的主干（master）合进来，再跑全部测试。
+#
+# 为什么要先合主干：以前经常出现「开发在自己拉分支那天的主干上测试是绿的，等验收时合到最新主干上
+# 其实是红的」，白白多转一轮。这个检查就是把这件事提前到提交代码的那一刻，由机器发现。
+#
+# 本期只报告，不拦截 —— 这里没有配置任何「必须绿才能合并」的规则，也没有动分支保护。
+name: PR 检查（先合最新主干再跑测试）
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch: # 手动触发：在 Actions 页面选一个分支跑，同样会先把主干合进来
+
+permissions:
+  contents: read
+
+# 同一个 PR 连着推好几次时，只保留最后一次的检查结果，前面的自动取消，省时间也省得看花眼
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  merge-master:
+    name: 1·先合最新主干
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      master-sha: ${{ steps.merge.outputs.master-sha }}
+      head-sha: ${{ steps.merge.outputs.head-sha }}
+    steps:
+      # 注意：这里故意取 PR 分支自己的提交（head.sha），而不是 GitHub 默认给的那个已经合好的临时版本，
+      # 因为我们要自己动手合一次，才能在合不上的时候明确告诉你「跟主干冲突了」。
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - id: merge
+        uses: ./.github/actions/merge-master
+        with:
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+
+  backend:
+    name: 2·后端测试 fastpay-server（MySQL + PostgreSQL）
+    needs: merge-master
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/merge-master
+        with:
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          # 用第一步定好的那笔主干提交，保证几项检查跑的是同一个主干版本
+          master-sha: ${{ needs.merge-master.outputs.master-sha }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # 端到端测试会在本机临时拉起真的 MariaDB 和 PostgreSQL（不用 Docker）。
+      # MariaDB 自带的可执行文件要用到这几个系统库，Ubuntu 24.04 上包名带了 t64 后缀，
+      # 装完再补一个软链，让它按老名字也能找得到。
+      - name: 装内嵌数据库要用的系统库
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libaio1t64 libncurses6 libtinfo6 || \
+            sudo apt-get install -y --no-install-recommends libaio1 libncurses5 libtinfo5
+          for lib in libaio.so.1 libncurses.so.5 libtinfo.so.5; do
+            if ! ldconfig -p | grep -q "$lib"; then
+              case "$lib" in
+                libaio.so.1)      src=$(ls /usr/lib/x86_64-linux-gnu/libaio.so.1t64 2>/dev/null || true) ;;
+                libncurses.so.5)  src=$(ls /usr/lib/x86_64-linux-gnu/libncurses.so.6* 2>/dev/null | head -1 || true) ;;
+                libtinfo.so.5)    src=$(ls /usr/lib/x86_64-linux-gnu/libtinfo.so.6* 2>/dev/null | head -1 || true) ;;
+              esac
+              [ -n "${src:-}" ] && sudo ln -sf "$src" "/usr/lib/x86_64-linux-gnu/$lib" || true
+            fi
+          done
+          sudo ldconfig
+
+      - name: 跑后端测试（mvn -B test）
+        working-directory: fastpay-server
+        run: mvn -B test
+
+      # 测试报告留档：红了可以点进这个附件看具体是哪几项失败、失败原因是什么
+      - name: 收走测试报告
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: 后端测试报告-surefire
+          path: fastpay-server/target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+  frontend:
+    name: 3·前端测试
+    needs: merge-master
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false # 一个前端红了，另一个照样跑完，一次看清全部问题
+      matrix:
+        app: [fastpay-admin, fastpay-merchant]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/merge-master
+        with:
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          master-sha: ${{ needs.merge-master.outputs.master-sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: 装依赖（npm ci）
+        working-directory: ${{ matrix.app }}
+        run: npm ci
+
+      - name: 跑前端测试（npm test）
+        working-directory: ${{ matrix.app }}
+        run: npm test
+
+      # 测试红了也照样打一次包，好让人一次看清「是测试挂了还是连编译都过不去」
+      - name: 打包（npm run build）
+        if: ${{ !cancelled() }}
+        working-directory: ${{ matrix.app }}
+        run: npm run build
+
+  summary:
+    name: 4·一句话结论
+    needs: [merge-master, backend, frontend]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 汇总
+        env:
+          MERGE_RESULT: ${{ needs.merge-master.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          MASTER_SHA: ${{ needs.merge-master.outputs.master-sha }}
+          HEAD_SHA: ${{ needs.merge-master.outputs.head-sha }}
+        run: |
+          set -euo pipefail
+
+          say() { echo "$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+
+          if [ "${MERGE_RESULT}" != "success" ]; then
+            say "## ❌ 没通过：你这个分支跟今天最新的主干冲突了，测试没能跑起来"
+            say ""
+            say "点上面「1·先合最新主干」那一项，能看到是哪几个文件打架了。"
+            exit 1
+          fi
+
+          say "本次检查基于主干版本：\`${MASTER_SHA}\`（你的分支：\`${HEAD_SHA}\`）"
+          say ""
+
+          FAILED=""
+          [ "${BACKEND_RESULT}"  = "success" ] || FAILED="${FAILED} 后端 fastpay-server；"
+          [ "${FRONTEND_RESULT}" = "success" ] || FAILED="${FAILED} 前端 fastpay-admin / fastpay-merchant；"
+
+          if [ -z "${FAILED}" ]; then
+            say "## ✅ 通过：把今天最新的主干合进来之后，全部测试都是绿的"
+          else
+            say "## ❌ 没通过：把今天最新的主干合进来之后，下面这些挂了"
+            say ""
+            say "-${FAILED}"
+            say ""
+            say "点对应的那一项进去看日志，就能看到具体是哪几条测试失败。"
+            exit 1
+          fi
