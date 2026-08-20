@@ -289,6 +289,57 @@ COMMENT ON COLUMN fp_pay_order.create_time IS '创建时间';
 COMMENT ON COLUMN fp_pay_order.update_time IS '更新时间';
 
 -- =====================================================
+-- 7. 待支付金额占位表 (fp_pending_pay_amount)
+-- 说明：同一商户 + 同一支付方式下未过期未支付订单的 pay_amount 必须唯一
+-- =====================================================
+DROP TABLE IF EXISTS fp_pending_pay_amount;
+CREATE TABLE fp_pending_pay_amount (
+    id BIGSERIAL PRIMARY KEY,
+    merchant_id BIGINT NOT NULL,
+    pay_type VARCHAR(20) NOT NULL,
+    pay_amount DECIMAL(10,2) NOT NULL,
+    order_no VARCHAR(32) NOT NULL,
+    expire_time TIMESTAMP NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_pending_pay_amount UNIQUE (merchant_id, pay_type, pay_amount)
+);
+CREATE INDEX idx_pending_order_no ON fp_pending_pay_amount (order_no);
+CREATE INDEX idx_pending_expire_time ON fp_pending_pay_amount (expire_time);
+
+COMMENT ON TABLE fp_pending_pay_amount IS '待支付金额占位表 - 保证同商户同支付方式下未支付订单的 pay_amount 唯一';
+COMMENT ON COLUMN fp_pending_pay_amount.pay_amount IS '实际应付金额（微调后落定的值）';
+COMMENT ON COLUMN fp_pending_pay_amount.expire_time IS '关联订单的过期时间，兜底清理用';
+
+-- =====================================================
+-- 8. 未匹配收款通知表 (fp_unmatched_notify)
+-- 说明：收到付款通知但按 (商户 + 支付方式 + pay_amount) 找不到对应待支付订单时落这张表
+-- =====================================================
+DROP TABLE IF EXISTS fp_unmatched_notify;
+CREATE TABLE fp_unmatched_notify (
+    id BIGSERIAL PRIMARY KEY,
+    amount DECIMAL(10,2) NOT NULL,
+    pay_type VARCHAR(20) NOT NULL,
+    merchant_id BIGINT DEFAULT NULL,
+    channel_id BIGINT DEFAULT NULL,
+    raw_message TEXT,
+    notify_time TIMESTAMP DEFAULT NULL,
+    handle_status SMALLINT DEFAULT 0,
+    handle_remark VARCHAR(500) DEFAULT NULL,
+    handled_order_no VARCHAR(32) DEFAULT NULL,
+    handle_time TIMESTAMP DEFAULT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_unmatched_handle_status ON fp_unmatched_notify (handle_status);
+CREATE INDEX idx_unmatched_merchant_id ON fp_unmatched_notify (merchant_id);
+CREATE INDEX idx_unmatched_create_time ON fp_unmatched_notify (create_time);
+
+COMMENT ON TABLE fp_unmatched_notify IS '未匹配收款通知 - 钱到了但认不到订单的记录';
+COMMENT ON COLUMN fp_unmatched_notify.handle_status IS '处理状态：0-待处理 1-已人工处理 2-已忽略';
+COMMENT ON COLUMN fp_unmatched_notify.raw_message IS '原始通知内容（title / msg / receiveTime 汇总）';
+COMMENT ON COLUMN fp_unmatched_notify.handled_order_no IS '人工对应到的平台订单号';
+
+-- =====================================================
 -- 初始化数据
 -- =====================================================
 --
@@ -312,6 +363,8 @@ COMMENT ON COLUMN fp_pay_order.update_time IS '更新时间';
 -- 4. fp_merchant_channel - 商户通道表，配置商户的支付通道
 -- 5. fp_pay_qrcode   - 收款二维码表，存储商户上传的收款码
 -- 6. fp_pay_order    - 支付订单表，存储所有支付订单记录
+-- 7. fp_pending_pay_amount - 待支付金额占位表，保证同商户同支付方式下未支付订单的 pay_amount 唯一
+-- 8. fp_unmatched_notify   - 未匹配收款通知表，钱到了但认不到订单的记录
 --
 -- 关系说明：
 -- - 一个商户(merchant)可以有多个店铺(shop)
