@@ -144,9 +144,35 @@ jobs:
         working-directory: ${{ matrix.app }}
         run: npm run build
 
+  # 发版验证脚本（deploy/verify-release.sh）自己也有一套自测。它守着一个很危险的坑：
+  # 脚本明明一个字都没从数据库查回来，却报「数据库连得上」，然后把人指去补跑迁移脚本 ——
+  # 库本身好好的，人却被指去改生产库，方向正好指反。
+  #
+  # 这套自测以前只能靠人记得手动跑，机器一次都不碰。等于守门的人有了，但没人叫他上岗：
+  # 谁哪天把那段判断改回老写法，检查照样全绿放行，坑就悄悄回来了。所以放进这里，每个 PR 都跑。
+  #
+  # 这一项很便宜（十几秒）：自测不连数据库、不要服务器、不要 root，只用 bash 跑一遍纯文本比对。
+  deploy-verify:
+    name: 4·发版验证脚本自测（deploy/verify-release.sh）
+    needs: merge-master
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/merge-master
+        with:
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          master-sha: ${{ needs.merge-master.outputs.master-sha }}
+
+      - name: 跑自测（bash deploy/verify-release.test.sh）
+        run: bash deploy/verify-release.test.sh
+
   summary:
-    name: 4·一句话结论
-    needs: [merge-master, backend, frontend]
+    name: 5·一句话结论
+    needs: [merge-master, backend, frontend, deploy-verify]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -156,6 +182,7 @@ jobs:
           MERGE_RESULT: ${{ needs.merge-master.result }}
           BACKEND_RESULT: ${{ needs.backend.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
+          DEPLOY_RESULT: ${{ needs.deploy-verify.result }}
           MASTER_SHA: ${{ needs.merge-master.outputs.master-sha }}
           HEAD_SHA: ${{ needs.merge-master.outputs.head-sha }}
         run: |
@@ -176,6 +203,7 @@ jobs:
           FAILED=""
           [ "${BACKEND_RESULT}"  = "success" ] || FAILED="${FAILED} 后端 fastpay-server；"
           [ "${FRONTEND_RESULT}" = "success" ] || FAILED="${FAILED} 前端 fastpay-admin / fastpay-merchant；"
+          [ "${DEPLOY_RESULT}"   = "success" ] || FAILED="${FAILED} 发版验证脚本 deploy/verify-release.sh 的自测；"
 
           if [ -z "${FAILED}" ]; then
             say "## ✅ 通过：把今天最新的主干合进来之后，全部测试都是绿的"
