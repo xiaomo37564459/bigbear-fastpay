@@ -5,7 +5,7 @@ import OrderDetailDialog from '@/views/order/OrderDetailDialog.vue'
 const row = {
   orderNo: 'FP20260819103000123456789012',
   outTradeNo: 'SHOP-ORDER-20260819-000000000001',
-  merchantName: '大熊测试商户',
+  merchantName: '示例测试商户',
   shopName: '总部旗舰店',
   subject: '年度会员套餐',
   amount: '199.00',
@@ -68,7 +68,7 @@ describe('订单详情弹窗', () => {
     expect(loader).toHaveBeenCalledWith(row.orderNo)
     const text = wrapper.text()
     // 列表行独有的字段没被详情接口的 null 冲掉
-    expect(text).toContain('大熊测试商户')
+    expect(text).toContain('示例测试商户')
     expect(text).toContain('总部旗舰店')
     // 详情接口补上来的字段显示出来了
     expect(text).toContain('203.0.113.42')

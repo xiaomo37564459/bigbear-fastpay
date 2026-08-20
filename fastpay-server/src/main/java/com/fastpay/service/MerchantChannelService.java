@@ -9,7 +9,7 @@ import java.util.List;
 /**
  * 商户通道服务接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public interface MerchantChannelService extends IService<MerchantChannel> {
 

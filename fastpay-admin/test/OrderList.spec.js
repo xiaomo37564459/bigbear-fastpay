@@ -34,7 +34,7 @@ vi.mock('@/api', () => ({
 const paidOrder = {
   orderNo: 'FP20260819103000123456',
   outTradeNo: 'SHOP-ORDER-20260819-000001',
-  merchantName: '大熊测试商户',
+  merchantName: '示例测试商户',
   shopName: '总部旗舰店',
   amount: '199.00',
   payType: 'wxpay',
@@ -48,7 +48,7 @@ const paidOrder = {
 const unpaidOrder = {
   orderNo: 'FP20260819104500654321',
   outTradeNo: 'SHOP-ORDER-20260819-000002',
-  merchantName: '大熊测试商户',
+  merchantName: '示例测试商户',
   shopName: '分店',
   amount: '9.90',
   payType: 'alipay',

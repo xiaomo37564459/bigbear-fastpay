@@ -61,7 +61,7 @@ class AdminAccountManagementTest {
     // 用一个和默认强度规则都过得去、但又不属于常见弱口令黑名单的新密码
     private static final String NEW_PASSWORD = "NewPass2026";
     // 改账号用的新账号，走邮箱格式，同时验证 username 字段能装下邮箱（老字段 50 字符，新字段 100）
-    private static final String NEW_USERNAME = "37564459@qq.com";
+    private static final String NEW_USERNAME = "test-admin@example.com";
 
     @BeforeAll
     static void startDatabase() throws Exception {

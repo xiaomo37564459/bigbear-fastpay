@@ -20,7 +20,7 @@ import java.util.List;
 /**
  * 管理后台 - 通道管理控制器
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "管理后台-通道管理", description = "通道的增删改查等操作")
 @RestController

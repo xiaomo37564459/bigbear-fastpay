@@ -8,7 +8,7 @@ import java.util.*;
  * 签名工具类
  * 用于API接口的签名生成和验证
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public class SignUtil {
 

@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 /**
  * 当前管理员信息 VO（专门给"账号设置"页面用，不包含密码字段）
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class AdminProfileVO {

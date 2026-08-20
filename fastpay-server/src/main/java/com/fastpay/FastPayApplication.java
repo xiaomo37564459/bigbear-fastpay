@@ -8,7 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * Fast 易支付 - 启动类
  * 个人免签支付平台，提供便捷的收款解决方案
  * 
- * @author FastPay
+ * @author xiaomo37564459
  * @version 1.0.0
  */
 @SpringBootApplication

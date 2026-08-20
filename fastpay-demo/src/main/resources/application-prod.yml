@@ -10,16 +10,25 @@ spring:
     suffix: .html
 
 # FAST 易支付配置
+# 生产环境的商户号、密钥、地址一律由环境变量注入，仓库里不保留任何真实值。
+# 部署时在 systemd 的 EnvironmentFile 里配置：
+#   FASTPAY_DEMO_MERCHANT_NO=<商户编号>
+#   FASTPAY_DEMO_SHOP_NO=<店铺编号>
+#   FASTPAY_DEMO_API_SECRET=<API 密钥>
+#   FASTPAY_DEMO_GATEWAY_URL=<支付网关地址>
+#   FASTPAY_DEMO_NOTIFY_URL=<异步通知地址>
+#   FASTPAY_DEMO_RETURN_URL=<同步跳转地址>
+# 密钥类变量故意不设默认值：没配就启动失败，避免用示例密钥上线。
 fastpay:
   # 商户编号（在商户平台获取）
-  merchant-no: M744163504226
+  merchant-no: ${FASTPAY_DEMO_MERCHANT_NO}
   # 店铺编号
-  shopNo: S745228666019
+  shopNo: ${FASTPAY_DEMO_SHOP_NO}
   # API 密钥（在商户平台获取）
-  api-secret: 7c8cf40b280c4f33883bf21ea457d6d1
+  api-secret: ${FASTPAY_DEMO_API_SECRET}
   # 支付网关地址
-  gateway-url: http://121.4.28.146/fastpay-server
+  gateway-url: ${FASTPAY_DEMO_GATEWAY_URL}
   # 异步通知地址（需要外网可访问）
-  notify-url: http://121.4.28.146:7002/pay/notify
+  notify-url: ${FASTPAY_DEMO_NOTIFY_URL}
   # 同步跳转地址
-  return-url: http://121.4.28.146:7002/pay/return
+  return-url: ${FASTPAY_DEMO_RETURN_URL}

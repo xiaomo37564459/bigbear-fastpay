@@ -6,7 +6,7 @@ import lombok.Getter;
  * 业务异常类
  * 用于处理业务逻辑中的异常情况
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Getter
 public class BusinessException extends RuntimeException {

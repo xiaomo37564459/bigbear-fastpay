@@ -2,6 +2,10 @@
 
 这份文档写给要上线、要更新版本、要出事时把系统救回来的人。照着做就行。
 
+> 🔐 **动这份文档之前先看一眼 [敏感信息怎么处理](SECRETS.md)。**
+> 那一页写清了：**什么能写进这个公开仓库、什么绝对不能、真实的密码密钥该放哪、上线验证要进后台用哪个账号。**
+> 一句话版本：域名、端口、占位符随便写；**账号密码、各种密钥、内网地址、任何人的真实邮箱，一个字都不许写进来。**
+
 当前线上环境：
 
 | 项 | 值 |
@@ -89,7 +93,7 @@ chown root:fastpay /etc/fastpay/fastpay-server.env
 chmod 640 /etc/fastpay/fastpay-server.env
 ```
 
-上面每个 `<...>` 都是占位符，要换成真实值。真实值只有两个来源：**服务器上这个文件本身**，以及交接时私下传递 —— **不要写进本文档、issue、聊天记录或任何提交**（本仓库是公开的）。
+上面每个 `<...>` 都是占位符，要换成真实值。真实值只有一个来源：**服务器上这个文件本身**。需要拿的人自己 SSH 上去看 —— **不要写进本文档、issue、聊天记录、附件或任何提交**（本仓库是公开的，Multica 工作区也没有真正私密的通道）。完整口径见 [敏感信息怎么处理](SECRETS.md)。
 
 - `<数据库地址>` / `<端口>`：数据库实例的地址和端口。这台机器上的 PostgreSQL 是**几个服务共用**的，地址以运维交接为准
 - `<用户名>` / `<密码>`：数据库账号
@@ -119,7 +123,11 @@ ssh root@150.158.99.251 '
   set -a; . /etc/fastpay/fastpay-server.env; set +a
   export PGPASSWORD="$DB_PASSWORD"
   # 从 DB_URL 里拆出 host / port / dbname，不要手写
-  eval $(echo "$DB_URL" | sed -E "s#^jdbc:postgresql://([^:/]+):([0-9]+)/([^?]+).*#DBH=\1 DBP=\2 DBN=\3#")
+  eval $(echo "$DB_URL" | sed -nE "s#^jdbc:postgresql://([^:/]+):([0-9]+)/([^?]+).*#DBH=\1 DBP=\2 DBN=\3#p")
+  # 拆不出来就当场停住。少了这一句，万一 env 里的 DB_URL 没写端口，上面会静默拆出三个空值，
+  # 下面的 pg_dump 会报一个跟真实原因八竿子打不着的错，排查起来很浪费时间。
+  # （sed 用 -n ... p 是配套的：没匹配上就什么都不输出，eval 不会拿原串当命令去执行，报错才干净）
+  [ -n "$DBH" ] && [ -n "$DBP" ] && [ -n "$DBN" ] || { echo "DB_URL 解析失败，请检查 /etc/fastpay/fastpay-server.env 里的 DB_URL 是否形如 jdbc:postgresql://主机:端口/库名"; exit 1; }
   VER=<本次版本>
   TS=$(date +%Y%m%d-%H%M%S)
   mkdir -p /root/fastpay-backups
@@ -140,7 +148,8 @@ scp fastpay-server/src/main/resources/db/migration/V1_1__admin_account_managemen
 ssh root@150.158.99.251 '
   set -a; . /etc/fastpay/fastpay-server.env; set +a
   export PGPASSWORD="$DB_PASSWORD"
-  eval $(echo "$DB_URL" | sed -E "s#^jdbc:postgresql://([^:/]+):([0-9]+)/([^?]+).*#DBH=\1 DBP=\2 DBN=\3#")
+  eval $(echo "$DB_URL" | sed -nE "s#^jdbc:postgresql://([^:/]+):([0-9]+)/([^?]+).*#DBH=\1 DBP=\2 DBN=\3#p")
+  [ -n "$DBH" ] && [ -n "$DBP" ] && [ -n "$DBN" ] || { echo "DB_URL 解析失败，请检查 /etc/fastpay/fastpay-server.env 里的 DB_URL 是否形如 jdbc:postgresql://主机:端口/库名"; exit 1; }
   psql -h "$DBH" -p "$DBP" -U "$DB_USERNAME" -d "$DBN" -v ON_ERROR_STOP=1 -e \
     -f /root/fastpay-ops/V1_1__admin_account_management_pg.sql
 '
@@ -188,6 +197,19 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 | MySQL（本地/老装机） | `db/migration/V1_1__admin_account_management_mysql.sql` | 同上，MySQL 方言 |
 
 两个脚本都是幂等的（用了 `IF NOT EXISTS`），误跑两次不会中断部署。
+
+**「密码存法迁移」版本需要执行的迁移脚本清单**（把 MD5 换成 bcrypt 的那一版，`V1_2`）：
+
+| 数据库 | 脚本 | 做了什么 |
+| --- | --- | --- |
+| PostgreSQL（生产） | `db/migration/V1_2__password_hash_bcrypt_pg.sql` | `fp_admin.password`、`fp_merchant.password` 从 64 放宽到 255 字符，容纳 bcrypt |
+| MySQL（本地/老装机） | `db/migration/V1_2__password_hash_bcrypt_mysql.sql` | 同上，MySQL 方言 |
+
+这一版跑迁移的步骤和上面 `V1_1` 完全一样：把 `scp` 和 `psql` 命令里的文件名换成 `V1_2__password_hash_bcrypt_pg.sql` 即可，其余照抄。脚本只改字段宽度、**不动任何一行已有数据**，误跑两次也没有副作用。
+
+> 💡 **这一版漏跑迁移会怎样？** 没有 `V1_1` 那么严重。新密码用的 bcrypt 哈希是 60 个字符，老字段 `VARCHAR(64)` 其实还装得下，所以即使忘了放宽，也不会一登录就 500。放宽到 255 是为了给以后（比如换更强的 Argon2）留余量，属于该做的保险，**请照常跑**，别省。
+>
+> 📌 老账号（历史 MD5 密码）不需要任何人重置：后端新旧格式都认，用户照常登录，**登录成功后系统会自动把这条记录重算成 bcrypt 存回去**，老格式随大家陆续登录自然消失，全程无感。
 
 前端是纯静态文件，替换完立刻生效，不用重启 nginx。
 
@@ -335,5 +357,6 @@ nginx: [emerg] unknown "connection_upgrade" variable
      运维在 `journalctl -u fastpay-server | grep '初始密码'` 里拿到之后，**立刻登进后台改成自己的密码**，之后就再也拿不到了。
    - 如果需求方偏要指定一个初始密码（例如迁移场景），在 `/etc/fastpay/fastpay-server.env` 里加一行 `FASTPAY_ADMIN_INITIAL_PASSWORD=<你想要的密码>`，然后首次启动。用完这一次记得**立刻删掉这一行**（不然下次重装库时又会被人在 env 文件里看到）。
    - `application-prod.yml` 里的 JWT 密钥同样没有默认值，必须由环境变量注入；`application-dev.yml` 里那个开发用的默认密钥仍然是公开的，本地开发无所谓，但**不要拿 dev 配置上生产**。
+   - **拿到之后放哪、上线验证该用哪个账号登后台**，见 [敏感信息怎么处理](SECRETS.md) 第四、五节。**别用需求方本人的账号去做验收。**
 
 4. **前端目录权限每次更新都要重新收紧。** 见上面「三、部署 / 更新版本」里的说明 —— Windows 打的 tar 包解压到 Linux 会变成全局可写。

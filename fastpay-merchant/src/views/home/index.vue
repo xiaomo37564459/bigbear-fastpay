@@ -266,7 +266,7 @@
           </div>
         </div>
         <div class="footer-bottom">
-          <p>@ 2025 FAST 易支付. All rights reserved. by 大熊Bigbear</p>
+          <p>@ 2025 FAST 易支付. All rights reserved. by xiaomo37564459</p>
         </div>
       </div>
     </footer>

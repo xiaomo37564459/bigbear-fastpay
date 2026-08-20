@@ -10,7 +10,7 @@ import java.math.BigDecimal;
  * 支付通知服务接口
  * 处理监听软件推送的支付通知
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public interface PayNotifyService {
 

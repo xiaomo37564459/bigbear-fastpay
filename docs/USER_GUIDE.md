@@ -16,8 +16,8 @@
 #### 步骤一：克隆项目
 
 ```bash
-git clone https://github.com/your-repo/bigbear-pay.git
-cd bigbear-pay
+git clone https://github.com/xiaomo37564459/bigbear-fastpay.git
+cd bigbear-fastpay
 ```
 
 #### 步骤二：初始化数据库
@@ -270,291 +270,50 @@ npm run dev
 
 ## 四、API 对接指南
 
-### 4.1 接口概览
+**接口文档已经统一收敛到一份：👉 [开发对接文档 docs/API.md](API.md)**
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/pay/submit` | POST | 页面跳转支付 |
-| `/api/pay/create` | POST | API 创建订单 |
-| `/api/pay/query` | GET | 查询订单状态 |
+这份使用说明只讲「后台怎么用、怎么部署」，接口细节不再在这里重复维护。
 
-### 4.2 页面跳转支付
+**为什么要收敛？** 同一套接口在两个地方各写一份，改了一处忘了另一处，接入方照着过期的那份写代码就会踩坑 —— 之前这里的参数表就漏了必填的 `shopNo`、多了一个根本不存在的 `notifyUrl` 请求参数。**一份文档、一个出处，改代码时只用同步一个地方。**
 
-适用于网站接入，通过表单提交跳转到支付页面。
+`docs/API.md` 里有：
 
-**请求地址**：`POST /api/pay/submit`
+| 你想知道什么 | 去哪看 |
+|---|---|
+| 平台开了两套接口，我该用哪套 | [第一章](API.md#一先搞清楚这里有两套接口) |
+| 一笔钱是怎么走完整个流程的（流程图） | [第二章](API.md#二一笔钱是怎么走完整个流程的) |
+| `/api/pay/*` 原生接口的全部参数和返回 | [第三章](API.md#三平台原生接口-apipay) |
+| 彩虹易支付协议接口（`submit.php` / `mapi.php` / `api.php`） | [第四章](API.md#四彩虹易支付协议接口-php) |
+| 回调通知怎么处理（含完整 PHP 示例） | [第五章](API.md#五回调通知平台--你的系统) |
+| 收款监听软件的上报接口 | [第六章](API.md#六收款监听软件的上报接口) |
+| 商户改回调地址、重置密钥 | [第七章](API.md#七商户自己用的配置接口) |
+| **两套签名算法**（各有能照着抄的完整例子） | [第八章](API.md#八两套签名算法千万别拿混) |
+| 错误码分别代表什么 | [第九章](API.md#九错误码对照表) |
+| 从零接入，一步步照着做 | [第十章](API.md#十从零接入照着做就行) |
+| 签名验不过、回调收不到怎么排查 | [第十一章](API.md#十一出问题了怎么查) |
+| WebSocket 实时推送怎么接 | [3.7](API.md#37-websocket-实时推送) |
 
-**请求参数**：
-
-| 参数 | 必填 | 类型 | 说明 |
-|------|------|------|------|
-| merchantNo | 是 | String | 商户编号 |
-| outTradeNo | 是 | String | 商户订单号（唯一） |
-| amount | 是 | String | 订单金额（元），如 10.00 |
-| subject | 是 | String | 商品名称 |
-| payType | 是 | String | 支付类型：wxpay / alipay |
-| returnUrl | 否 | String | 支付成功后跳转地址 |
-| notifyUrl | 否 | String | 异步通知地址（覆盖默认配置） |
-| extParam | 否 | String | 扩展参数，回调时原样返回 |
-| timestamp | 是 | Long | 时间戳（秒） |
-| sign | 是 | String | 签名 |
-
-**HTML 表单示例**：
-
-```html
-<form action="https://your-domain/api/pay/submit" method="POST">
-  <input type="hidden" name="merchantNo" value="M230117997677">
-  <input type="hidden" name="outTradeNo" value="ORDER202512050001">
-  <input type="hidden" name="amount" value="10.00">
-  <input type="hidden" name="subject" value="测试商品">
-  <input type="hidden" name="payType" value="wxpay">
-  <input type="hidden" name="returnUrl" value="https://your-site.com/pay/result">
-  <input type="hidden" name="timestamp" value="1733400000">
-  <input type="hidden" name="sign" value="签名值">
-  <button type="submit">立即支付</button>
-</form>
-```
-
-### 4.3 API 创建订单
-
-适用于 APP 或自定义支付页面。
-
-**请求地址**：`POST /api/pay/create`
-
-**Content-Type**：`application/json`
-
-**请求参数**：
-
-```json
-{
-  "merchantNo": "M230117997677",
-  "outTradeNo": "ORDER202512050001",
-  "amount": "10.00",
-  "subject": "测试商品",
-  "payType": "wxpay",
-  "notifyUrl": "https://your-site.com/pay/notify",
-  "timestamp": 1733400000,
-  "sign": "签名值"
-}
-```
-
-**响应示例**：
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "orderNo": "P202512050001",
-    "outTradeNo": "ORDER202512050001",
-    "amount": 10.00,
-    "payType": "wxpay",
-    "qrcodeUrl": "wxp://xxx",
-    "payPageUrl": "https://your-domain/pay?orderNo=xxx",
-    "expireTime": "2025-12-05 12:00:00"
-  }
-}
-```
-
-### 4.4 查询订单
-
-**请求地址**：`GET /api/pay/query`
-
-**请求参数**：
-
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| merchantNo | 是 | 商户编号 |
-| outTradeNo | 是 | 商户订单号 |
-
-**响应示例**：
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "orderNo": "P202512050001",
-    "outTradeNo": "ORDER202512050001",
-    "amount": "10.00",
-    "payAmount": "10.00",
-    "status": 1,
-    "payTime": "2025-12-05 11:30:00"
-  }
-}
-```
-
-### 4.5 签名算法
-
-#### 签名步骤
-
-1. 将所有非空参数按 **字母顺序** 排序
-2. 拼接成 `key=value&key=value` 格式
-3. 最后拼接 `&key=API_SECRET`
-4. 对整个字符串进行 **MD5** 加密
-5. 转换为 **大写**
-
-#### PHP 示例
-
-```php
-function generateSign($params, $apiSecret) {
-    // 移除 sign 参数
-    unset($params['sign']);
-    
-    // 按字母顺序排序
-    ksort($params);
-    
-    // 拼接参数
-    $signStr = '';
-    foreach ($params as $k => $v) {
-        if ($v !== '' && $v !== null) {
-            $signStr .= $k . '=' . $v . '&';
-        }
-    }
-    $signStr .= 'key=' . $apiSecret;
-    
-    // MD5 加密并转大写
-    return strtoupper(md5($signStr));
-}
-```
-
-#### Java 示例
-
-```java
-public static String generateSign(Map<String, Object> params, String apiSecret) {
-    // 移除 sign 参数
-    params.remove("sign");
-    
-    // 按字母顺序排序
-    List<String> keys = new ArrayList<>(params.keySet());
-    Collections.sort(keys);
-    
-    // 拼接参数
-    StringBuilder sb = new StringBuilder();
-    for (String key : keys) {
-        Object value = params.get(key);
-        if (value != null && !"".equals(value.toString())) {
-            sb.append(key).append("=").append(value).append("&");
-        }
-    }
-    sb.append("key=").append(apiSecret);
-    
-    // MD5 加密并转大写
-    return DigestUtils.md5Hex(sb.toString()).toUpperCase();
-}
-```
-
-### 4.6 回调通知
-
-支付成功后，系统会向商户配置的 `notifyUrl` 发送 POST 请求。
-
-**回调参数**：
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| merchantNo | String | 商户编号 |
-| orderNo | String | 平台订单号 |
-| outTradeNo | String | 商户订单号 |
-| amount | String | 订单金额 |
-| payAmount | String | 实付金额 |
-| payType | String | 支付类型 |
-| status | String | 订单状态：1-已支付 |
-| payTime | String | 支付时间 |
-| timestamp | String | 时间戳 |
-| extParam | String | 扩展参数 |
-| sign | String | 签名 |
-
-**处理流程**：
-
-1. 验证签名
-2. 验证订单是否存在
-3. 验证订单金额是否一致
-4. 更新订单状态
-5. 返回 `success` 字符串
-
-**PHP 回调处理示例**：
-
-```php
-// 接收回调参数
-$params = $_POST;
-
-// 验证签名
-$sign = $params['sign'];
-unset($params['sign']);
-$mySign = generateSign($params, $apiSecret);
-
-if ($sign !== $mySign) {
-    echo 'fail';
-    exit;
-}
-
-// 获取订单信息
-$outTradeNo = $params['outTradeNo'];
-$amount = $params['amount'];
-$status = $params['status'];
-
-// 处理业务逻辑
-if ($status == '1') {
-    // 更新订单状态
-    // 发货或开通服务
-}
-
-// 返回成功
-echo 'success';
-```
-
-### 4.7 WebSocket 实时推送
-
-支付页面可通过 WebSocket 接收实时支付结果。
-
-**连接地址**：`ws://your-domain/fastpay-server/ws/pay/{merchantNo}/{outTradeNo}`
-
-**消息格式**：
-
-```json
-{
-  "type": "PAY_SUCCESS",
-  "orderNo": "P202512050001",
-  "outTradeNo": "ORDER202512050001",
-  "amount": "10.00"
-}
-```
-
-**JavaScript 示例**：
-
-```javascript
-const ws = new WebSocket('ws://your-domain/fastpay-server/ws/pay/' + merchantNo + outTradeNo);
-
-ws.onmessage = function(event) {
-    const data = JSON.parse(event.data);
-    if (data.type === 'PAY_SUCCESS') {
-        // 支付成功，跳转结果页
-        window.location.href = '/pay/result?orderNo=' + data.orderNo;
-    }
-};
-
-ws.onerror = function(error) {
-    console.error('WebSocket 错误:', error);
-};
-```
+服务启动后还可以看在线接口文档：`https://你的域名/fastpay-server/doc.html`
 
 ---
 
 ## 五、常见问题
 
+> 接口对接类的问题（签名、回调、路径前缀）有更详细的排查手册：[docs/API.md 第十一章](API.md#十一出问题了怎么查)。
+
 ### 5.1 签名验证失败
 
-**可能原因**：
-1. API 密钥不正确
-2. 参数排序错误
-3. 参数值包含特殊字符未处理
-4. 时间戳过期
+**头号原因：把两套签名算法拿混了。** 平台有两套接口，签名规则不一样 —— 走 `/api/pay/*` 是「末尾拼 `&key=密钥`、结果转大写」，走 `submit.php` / `mapi.php` 是「末尾直接拼密钥、结果转小写」。
+**一眼自查**：原生接口的签名一定是 32 位**大写**，易支付的一定是 32 位**小写**，大小写不对就是拿混了。
 
-**解决方法**：
-1. 确认使用正确的 API 密钥
-2. 检查参数是否按字母顺序排序
-3. 确保参数值正确编码
-4. 使用当前时间戳
+**其它常见原因**：
+1. 漏了必填参数 `shopNo`（原生下单必填，且要参与签名）
+2. 用错了密钥（要用 **API Secret**，不是 API Key，也不是登录密码）
+3. 金额字符串对不上（签名用 `10.00`，请求里发 `10`）
+4. 时间戳传成了 13 位毫秒（应该是 10 位秒）
+5. 中文参数没用 UTF-8 编码算 MD5
+
+逐条排查步骤见 [docs/API.md 11.1](API.md#111-签名老是验不过怎么查)。
 
 ### 5.2 回调通知收不到
 
@@ -584,14 +343,14 @@ ws.onerror = function(error) {
 ### 5.4 WebSocket 连接失败
 
 **可能原因**：
-1. WebSocket 端口未开放
-2. Nginx 未配置 WebSocket 代理
-3. 跨域问题
+1. Nginx 没配 WebSocket 代理（默认配置转发不了 Upgrade 头）
+2. 后端端口不通
+3. 页面是 HTTPS 却用了 `ws://`，被浏览器拦掉
 
 **解决方法**：
-1. 确保 9090 端口可访问
-2. 配置 Nginx WebSocket 代理
-3. 检查跨域配置
+1. 按 [docs/API.md 11.5](API.md#115-websocket-连不上) 加一段 nginx 配置
+2. 确认后端 **7001** 端口可访问（WebSocket 和 HTTP 走同一个端口，没有单独的端口）
+3. HTTPS 页面必须用 `wss://`
 
 ---
 
@@ -684,5 +443,5 @@ nohup java -jar fastpay-server-1.0.0.jar --spring.profiles.active=prod > /dev/nu
 
 如有问题，请联系：
 
-- **开发者**：大熊 Bigbear
-- **项目地址**：https://github.com/your-repo/bigbear-pay
+- **开发者**：xiaomo37564459
+- **项目地址**：https://github.com/xiaomo37564459/bigbear-fastpay

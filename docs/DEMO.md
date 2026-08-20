@@ -72,9 +72,9 @@ server:
 # FAST 易支付配置
 fastpay:
   # 商户编号（在商户平台获取）
-  merchant-no: M230117997677
+  merchant-no: your-merchant-no-here
   # API 密钥（在商户平台获取）
-  api-secret: 9024dc8cd22d4113ad76ca37dead0817
+  api-secret: your-api-secret-here
   # 支付网关地址
   gateway-url: http://localhost:9090/fastpay-server
   # 异步通知地址（需要外网可访问）
@@ -613,7 +613,7 @@ ngrok http 8080
 Demo 项目会输出详细的请求和响应日志，方便调试：
 
 ```
-INFO  - API 创建订单请求参数: {merchantNo=M230117997677, ...}
+INFO  - API 创建订单请求参数: {merchantNo=M12345678, ...}
 INFO  - API 创建订单响应状态码: 200, 响应内容: {...}
 INFO  - 收到支付回调通知: {orderNo=P202512050001, ...}
 ```
@@ -624,5 +624,5 @@ INFO  - 收到支付回调通知: {orderNo=P202512050001, ...}
 
 如有问题，请联系：
 
-- **开发者**：大熊 Bigbear
-- **项目地址**：https://github.com/your-repo/bigbear-pay
+- **开发者**：xiaomo37564459
+- **项目地址**：https://github.com/xiaomo37564459/bigbear-fastpay

@@ -38,7 +38,7 @@ import java.util.Map;
  * 支付接口控制器
  * 提供支付订单创建、查询、支付页面等功能
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Tag(name = "支付接口", description = "支付订单创建、查询、支付页面等公开接口")

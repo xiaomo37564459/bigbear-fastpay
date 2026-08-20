@@ -18,7 +18,7 @@ import java.util.List;
  * 全局异常处理器
  * 统一处理系统中抛出的各种异常
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @RestControllerAdvice
