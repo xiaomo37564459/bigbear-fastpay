@@ -1,12 +1,14 @@
 -- =====================================================
--- Fast 易支付 数据库迁移脚本 V1.2（PostgreSQL）
+-- Fast 易支付 数据库迁移脚本 V1.4（PostgreSQL）
 -- 主题：解决"两人同价撞单认错人"（MTM-170）
 -- 说明：老库升级用。新库直接跑 init-pg.sql 已经是新结构，不需要这里
+--
+-- 为什么编号是 V1.4 不是 V1.2：见 MySQL 版顶部（MTM-205 上把撞车的编号一次改开）
 --
 -- 变更点：见 MySQL 版
 --
 -- 生产库怎么跑（在部署新版 jar、重启后端之前执行）：
---   psql -h <host> -U <user> -d bigbear_fastpay -f V1_2__pay_amount_uniqueness_pg.sql
+--   psql -h <host> -U <user> -d bigbear_fastpay -f V1_4__pay_amount_uniqueness_pg.sql
 -- =====================================================
 
 -- 1. 待支付金额占位表

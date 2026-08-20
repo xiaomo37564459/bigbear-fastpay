@@ -251,8 +251,6 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 
 步骤和上面 `V1_1` / `V1_2` 完全一样：把 `scp` 和 `psql` 命令里的文件名换成 `V1_3__order_notify_result_pg.sql`，其余照抄。
 
-**迁移脚本的执行顺序是 `V1_1` → `V1_2` → `V1_3`。** 库落后好几版时按顺序补跑，三个脚本都是幂等的，已经跑过的再跑一遍不会出事。
-
 > 💡 **上线前实测过**（PostgreSQL 14，一张 20 万行订单的表）：加这两列**耗时个位数毫秒**，不锁表、不需要停机窗口；20 万行老订单一行没动，两个新列是 `NULL`（不会在后台误显示成「回调成功」）。回退脚本也实测过：执行完订单数据一行没丢，退完还能再升回去。
 >
 > ⚠️ **顺序不能反**：必须先跑脚本、再换 jar。反过来做，中间那段时间订单接口会全挂，日志报「字段不存在」。
@@ -260,6 +258,23 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 > 💡 **漏跑迁移会怎样？** 比 `V1_1` 温和一些（不会启动失败），但**只要有人点开订单详情或订单列表就会报错** —— 因为新版 jar 会去查这两列。所以别省。
 >
 > ⚠️ **原厂 MySQL 上要改一处**：脚本里的 `ADD COLUMN IF NOT EXISTS` 是 MariaDB 的写法，**原厂 MySQL 不支持**（MySQL 8.4 手册的 ALTER TABLE 语法里没有这个选项），照跑会报语法错 `ERROR 1064`。在原厂 MySQL 上执行时把两句里的 `IF NOT EXISTS` 去掉即可。生产用的是 PostgreSQL，走不到这里。
+
+**「pay_amount 撞单」版本需要执行的迁移脚本清单**（`V1_4`）：
+
+| 数据库 | 脚本 | 做了什么 |
+| --- | --- | --- |
+| PostgreSQL（生产） | `db/migration/V1_4__pay_amount_uniqueness_pg.sql` | 新增 `fp_pending_pay_amount`（待支付金额占位表）和 `fp_unmatched_notify`（未匹配收款通知表）；给老 `fp_pay_order` 补齐 `pay_amount`；把同金额的历史 UNPAID 撞单折成一笔、剩下的塞进占位表 |
+| MySQL（本地/老装机） | `db/migration/V1_4__pay_amount_uniqueness_mysql.sql` | 同上，MySQL 方言 |
+
+步骤和上面 `V1_1` / `V1_2` / `V1_3` 完全一样：把 `scp` 和 `psql` 命令里的文件名换成 `V1_4__pay_amount_uniqueness_pg.sql`，其余照抄。
+
+> 📌 **为什么直接跳到 V1_4**：这份脚本最初写完时占的是 `V1_2`，那时主干上还没有别的 V1_2。后来「密码换 bcrypt」抢先占了 `V1_2` 随 `v1.4.0` 发出去，同一编号对应两份完全不同的脚本，运维照文档跑迁移会不知道该跑哪一个。发版之前把这一份顺延到 `V1_4`（`V1_3` 是「订单回调结果落库」，也未发布），四个脚本互相无强依赖。详见 MTM-205。
+>
+> 💡 **漏跑会怎样？** 后端一启动就会崩：撞单认对人逻辑上线后要读 `fp_pending_pay_amount` / `fp_unmatched_notify` 两张表，表不存在会直接报「relation does not exist」（PG）或「Table doesn't exist」（MySQL）。**必须先跑脚本、再换 jar。**
+>
+> 💡 **重复跑安全**：建表都是 `CREATE TABLE IF NOT EXISTS`，占位表插入是 `ON CONFLICT DO NOTHING`（PG）/ `ON DUPLICATE KEY UPDATE`（MySQL），补齐 `pay_amount` 只挑 `IS NULL` 的老行，第二次跑没有副作用。
+
+**迁移脚本的执行顺序是 `V1_1` → `V1_2` → `V1_3` → `V1_4`。** 库落后好几版时按顺序补跑，四个脚本都是幂等的，已经跑过的再跑一遍不会出事。
 
 前端是纯静态文件，替换完立刻生效，不用重启 nginx。
 
