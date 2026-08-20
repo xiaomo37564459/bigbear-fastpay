@@ -55,8 +55,11 @@ head_() { printf '\n%s%s%s\n' "$C_B" "$1" "$C_OFF"; }
 # 上面那条「不打印数据库地址」的规矩，日志片段这里也得守住。
 # 日志里的 ERROR 经常整段带着 jdbc:postgresql://主机:端口/库名（Hikari 连不上库时就这样），
 # 原样打出来等于绕过前面的防线，把内网地址贴进 issue。所以透出去之前先过一遍这个。
+# 一路吃到空白或引号为止，中间的逗号分号照吃不误：数据库地址允许写成多台机器
+# （jdbc:postgresql://主机A:5432,主机B:5432/库名）。要是遇到逗号就停手，
+# 只会遮掉主机A，主机B 原样漏出去 —— 那等于白遮。宁可多遮，不能漏遮。
 mask() {
-  sed -E -e 's#(jdbc:[a-z]+://)[^[:space:],;"]*#\1<地址已隐去>#g' \
+  sed -E -e 's#(jdbc:[a-z]+://)[^[:space:]"]*#\1<地址已隐去>#g' \
          -e 's#([0-9]{1,3}\.){3}[0-9]{1,3}#<IP已隐去>#g'
 }
 
@@ -178,19 +181,28 @@ else
   # 它不含 error / failed / could not，不认它的话会掉进下面的 else，打出一句
   # 「数据库连得上」——根本没连过，跟「漏写版本标记也报全绿」是同一种假装通过。
   elif echo "$DB_OUT" | grep -qiE 'error|failed|could not|command not found'; then
-    # 故意不打印 psql 的原始报错：它里面带着数据库地址和账号名
-    # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
-    # 而这份输出经常被贴回 issue 给人看，docs/SECRETS.md 明令内网地址一个字都不许进去。
-    # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次 psql。
-    case "$DB_OUT" in
-      *"password authentication failed"*)  DB_HINT='账号或口令不对' ;;
-      *"does not exist"*)                  DB_HINT='库名或账号不存在' ;;
-      *"Connection refused"*|*"could not connect"*|*"could not translate"*|*"timeout expired"*|*"no route to host"*)
-                                           DB_HINT='连不上（地址、端口、防火墙，或者数据库没起来）' ;;
-      *"command not found"*)               DB_HINT='这台机器上没装 psql 客户端，这一项查不了' ;;
-      *)                                   DB_HINT='其他错误' ;;
-    esac
-    no "连不上数据库：$DB_HINT。原始报错里带着服务器地址，这里不打印；要看原文就自己 SSH 上去手工跑一次 psql（连接信息在 $ENV_FILE）"
+    if echo "$DB_OUT" | grep -qi 'command not found'; then
+      # 单独拎出来说，别混进「连不上数据库」那一句：这里根本没连过库。
+      # 话必须说全 —— 只写一句「查不了」，半夜看到的人会顺着下面「补跑 V1_1 迁移」
+      # 的思路去动数据库，方向正好指反。
+      no "这台机器上没装 psql 客户端，数据库这一项查不了 —— 「V1_1 到位没」「V1_2 到位没」这两项也一并没查到"
+      printf '         装上再跑一遍这个脚本：Debian/Ubuntu  apt-get install -y postgresql-client\n'
+      printf '                               CentOS/Rocky   dnf install -y postgresql\n'
+      printf '         ⚠️ 这不代表数据库有问题 —— 脚本压根没连过库。别去动数据库，也别去补跑迁移脚本。\n'
+    else
+      # 故意不打印 psql 的原始报错：它里面带着数据库地址和账号名
+      # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
+      # 而这份输出经常被贴回 issue 给人看，docs/SECRETS.md 明令内网地址一个字都不许进去。
+      # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次 psql。
+      case "$DB_OUT" in
+        *"password authentication failed"*)  DB_HINT='账号或口令不对' ;;
+        *"does not exist"*)                  DB_HINT='库名或账号不存在' ;;
+        *"Connection refused"*|*"could not connect"*|*"could not translate"*|*"timeout expired"*|*"no route to host"*)
+                                             DB_HINT='连不上（地址、端口、防火墙，或者数据库没起来）' ;;
+        *)                                   DB_HINT='其他错误' ;;
+      esac
+      no "连不上数据库：$DB_HINT。原始报错里带着服务器地址，这里不打印；要看原文就自己 SSH 上去手工跑一次 psql（连接信息在 $ENV_FILE）"
+    fi
   else
     ok "数据库连得上"
     # V1_1：token_version 列必须在（少了后端根本起不来，这里再确认一次）
