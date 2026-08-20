@@ -341,7 +341,7 @@ ssh root@150.158.99.251 '
 回退完照样跑一遍验证脚本，版本号写**你退回到的那一版**（不是刚退掉的那一版）：
 
 ```bash
-ssh root@150.158.99.251 'bash -s <退回到的版本>' < deploy/verify-release.sh
+ssh root@<服务器> 'bash -s <退回到的版本>' < deploy/verify-release.sh
 ```
 
 > ⚠️ **回退时数据库要不要一起退回去？不用，也不要退。**
