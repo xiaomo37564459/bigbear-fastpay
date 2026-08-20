@@ -77,6 +77,8 @@
                       <el-icon><DocumentCopy /></el-icon>
                       复制
                     </el-button>
+                    <!-- 说明这段内容是哪来的，例如失败原因是"对方返回的"还是"我们报的错" -->
+                    <span v-if="item.suffix" class="fp-detail-hint">{{ item.suffix }}</span>
                   </template>
 
                   <span v-else class="fp-detail-text">{{ item.value }}</span>
@@ -276,6 +278,14 @@ defineExpose({ layout, order, loading, error })
 .fp-detail-suffix {
   font-size: 12px;
   color: #909399;
+}
+
+/* 长内容下面的说明文字：独占一行，不跟正文抢位置 */
+.fp-detail-hint {
+  flex: 0 0 100%;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
 }
 
 .fp-order-detail-dialog .fp-copy-btn {
