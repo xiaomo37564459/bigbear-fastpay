@@ -70,21 +70,30 @@
         <span class="card-extra">共 {{ total }} 条记录</span>
       </div>
       <div class="card-body" style="padding-top: 0;">
-        <el-table :data="orderList" v-loading="loading" stripe>
-          <el-table-column prop="orderNo" label="平台订单号" width="180">
+        <el-table :data="orderList" v-loading="loading" stripe scrollbar-always-on class="order-table">
+          <!-- 两个订单号并成一栏、上下两行：原来各占一列（180 + 140）还都被截断，
+               合成一栏之后平台订单号一行完整显示，商户单号跟在下面，总宽反而省出 130 -->
+          <el-table-column label="订单号" :min-width="COL.orderNo">
             <template #default="{ row }">
-              <span class="order-no">{{ row.orderNo }}</span>
+              <div class="order-no" :title="row.orderNo">{{ row.orderNo }}</div>
+              <div class="order-no-sub" :title="row.outTradeNo">
+                商户单号 {{ row.outTradeNo || '-' }}
+              </div>
             </template>
           </el-table-column>
-          <el-table-column prop="outTradeNo" label="商户订单号" width="140" show-overflow-tooltip />
-          <el-table-column prop="shopName" label="店铺" width="100" show-overflow-tooltip />
-          <el-table-column prop="subject" label="商品名称" min-width="120" show-overflow-tooltip />
-          <el-table-column label="金额" width="90" align="right">
+          <!-- 商品名称一行、店铺一行。店铺原来单独占 100，"token.copliot.cloud" 只看得到前几个字 -->
+          <el-table-column label="商品 / 店铺" :min-width="COL.subject">
+            <template #default="{ row }">
+              <div class="cell-main" :title="row.subject">{{ row.subject || '-' }}</div>
+              <div class="cell-sub" :title="row.shopName">{{ row.shopName || '-' }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="金额" :width="COL.amount" align="right">
             <template #default="{ row }">
               <span class="amount-text">¥{{ row.amount }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="支付类型" width="85" align="center">
+          <el-table-column label="支付类型" :width="COL.payType" align="center">
             <template #default="{ row }">
               <div class="pay-type-cell">
                 <el-icon v-if="row.payType === 'wxpay'" class="pay-icon wxpay"><ChatDotRound /></el-icon>
@@ -93,14 +102,14 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="75" align="center">
+          <el-table-column label="状态" :width="COL.status" align="center">
             <template #default="{ row }">
               <el-tag :type="getStatusType(row.status)" size="small" effect="light">
                 {{ getStatusText(row.status) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="回调状态" width="100" align="center">
+          <el-table-column label="回调状态" :width="COL.notify" align="center">
             <template #default="{ row }">
               <template v-if="row.status === 1">
                 <el-tag :type="getNotifyStatusType(row.notifyStatus)" size="small">
@@ -111,18 +120,24 @@
               <span v-else class="text-muted">-</span>
             </template>
           </el-table-column>
-          <el-table-column label="跳转地址" width="150" show-overflow-tooltip>
+          <el-table-column label="跳转地址" :min-width="COL.returnUrl" show-overflow-tooltip>
             <template #default="{ row }">
               <span v-if="row.returnUrl" class="return-url">{{ row.returnUrl }}</span>
               <span v-else class="text-muted">-</span>
             </template>
           </el-table-column>
-          <el-table-column label="创建时间" width="160">
+          <!-- 时间列拆成"日期 / 时刻"上下两行：一行放不下会被右侧固定的操作列截掉，
+               拆两行后完整时间戳始终看得全，列宽还从 160 降到 100 -->
+          <el-table-column label="创建时间" :width="COL.createTime">
             <template #default="{ row }">
-              {{ formatTime(row.createTime) }}
+              <template v-if="row.createTime">
+                <div class="time-date">{{ splitTime(row.createTime).date }}</div>
+                <div class="time-clock">{{ splitTime(row.createTime).time }}</div>
+              </template>
+              <span v-else class="text-muted">-</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="180" fixed="right" align="center">
+          <el-table-column label="操作" :width="COL.action" :fixed="actionFixed" align="center" class-name="action-cell">
             <template #default="{ row }">
               <el-button type="primary" link size="small" @click="handleView(row)">详情</el-button>
               <el-button v-if="row.status === 0" type="success" link size="small" @click="handleConfirm(row)">确认</el-button>
@@ -159,16 +174,17 @@
 /**
  * Fast 易支付 - 订单管理
  */
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getOrderPage, getOrderByNo, confirmOrder, closeOrder, resendNotify } from '@/api'
 import OrderDetailDialog from './OrderDetailDialog.vue'
+import { ORDER_COLUMN_WIDTHS as COL, shouldFixActionColumn } from './columns'
 import {
   getStatusText,
   getStatusType,
   getNotifyStatusText,
   getNotifyStatusType,
-  formatDateTime as formatTime
+  splitDateTime as splitTime
 } from '@/utils/orderDetail'
 
 const queryParams = reactive({
@@ -187,6 +203,14 @@ const total = ref(0)
 
 const showDetail = ref(false)
 const currentOrder = ref({})
+
+// 窗口够宽（整张表放得下、不会横向滚动）时才固定「操作」列，
+// 窄窗口下取消固定，避免固定列浮上来盖住「跳转地址」「创建时间」
+const actionFixed = ref(false)
+const syncActionFixed = () => {
+  const pageWidth = typeof document === 'undefined' ? 0 : document.documentElement.clientWidth
+  actionFixed.value = shouldFixActionColumn(pageWidth) ? 'right' : false
+}
 
 // 状态文案、时间格式化统一放在 @/utils/orderDetail，列表和详情弹窗共用一套口径
 
@@ -253,7 +277,13 @@ const handleResendNotify = async (order) => {
 }
 
 onMounted(() => {
+  syncActionFixed()
+  window.addEventListener('resize', syncActionFixed)
   loadData()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncActionFixed)
 })
 </script>
 
@@ -289,11 +319,62 @@ onMounted(() => {
   }
 }
 
+/* 单元格左右内边距从 12px 收到 10px：9 列一共省出 36px，
+   刚好够整张表在内容区里放下，不用横向滚动 */
+.order-table :deep(.el-table .cell) {
+  padding-left: 10px;
+  padding-right: 10px;
+  line-height: 1.4;
+}
+
+/* 操作列按钮间距收到 8px，「详情 / 确认 / 关闭」三个按钮才能排成一行不折行 */
+.order-table :deep(.action-cell .el-button + .el-button) {
+  margin-left: 8px;
+}
+
+/* 主次两行：主信息正常色，次信息灰色小字，都不换行、超长省略并挂 title 提示 */
+.order-no,
+.order-no-sub,
+.cell-main,
+.cell-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 订单号样式 */
 .order-no {
   font-family: 'Monaco', 'Menlo', monospace;
   font-size: 12px;
   color: #409eff;
+}
+
+.order-no-sub,
+.cell-sub {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+
+.cell-main {
+  color: #303133;
+}
+
+/* 时间：日期一行、时刻一行，数字用等宽字形，两行左边对得齐 */
+.time-date,
+.time-clock {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.time-date {
+  color: #303133;
+}
+
+.time-clock {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
 }
 
 /* 支付类型单元格 */

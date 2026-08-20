@@ -71,6 +71,22 @@ export function formatDateTimeOrDash(time) {
 }
 
 /**
+ * 把 yyyy-MM-dd HH:mm:ss 拆成日期和时刻两段。
+ *
+ * 列表里时间列只有 100px 宽，一行放不下完整时间戳会被截断成 "2026-08…"；
+ * 拆成上下两行后，年月日时分秒一个不少，列宽还能省出一半留给别的列。
+ * 没有时间时两段都返回空串，由调用方决定显示占位符。
+ *
+ * 和管理后台 fastpay-admin 的同名函数保持一致，两边列表口径不分叉。
+ */
+export function splitDateTime(value) {
+  const text = formatDateTime(value)
+  if (!text) return { date: '', time: '' }
+  const [date, time = ''] = text.split(' ')
+  return { date, time }
+}
+
+/**
  * 金额格式化：没有金额时显示占位符，而不是显示成 "¥-"
  * 0 元是合法金额，要正常显示
  */

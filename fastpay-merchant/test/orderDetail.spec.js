@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatDateTime,
+  splitDateTime,
   formatAmount,
   formatPayType,
   formatPayMethod,
@@ -54,6 +55,13 @@ describe('订单详情 - 取值与格式化', () => {
     expect(formatDateTime('2026-08-19T10:30:00')).toBe('2026-08-19 10:30:00')
     expect(formatDateTime('2026-08-19 10:30:00')).toBe('2026-08-19 10:30:00')
     expect(formatDateTime('2026-08-19T10:30:00.123+08:00')).toBe('2026-08-19 10:30:00')
+  })
+
+  it('时间能拆成日期和时刻两段，列表里分两行显示，秒不会丢', () => {
+    expect(splitDateTime('2026-08-19T09:30:38')).toEqual({ date: '2026-08-19', time: '09:30:38' })
+    expect(splitDateTime('2026-08-19 09:30:38')).toEqual({ date: '2026-08-19', time: '09:30:38' })
+    expect(splitDateTime(null)).toEqual({ date: '', time: '' })
+    expect(splitDateTime('')).toEqual({ date: '', time: '' })
   })
 
   it('金额为空时显示占位符而不是 ¥-，0 元要正常显示', () => {

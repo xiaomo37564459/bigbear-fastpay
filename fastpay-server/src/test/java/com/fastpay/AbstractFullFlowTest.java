@@ -719,6 +719,122 @@ abstract class AbstractFullFlowTest {
         assertThat(orderPage.get("pages").asLong()).isEqualTo(2L);
     }
 
+    // MTM-180 起：商户订单列表以前只认 shopId / status，其他筛选参数会被静默丢掉，
+    // 前端搜"不存在的订单号"反而拉回全部订单。下面几步锁死每个筛选参数都真的走到查询里。
+    // 到 step9~step13 结束后一共 5 笔订单，全部同一商户、全部 wxpay：
+    //   IT0000000001（wxpay，已支付，subject=test order 1）
+    //   IT0000000002（wxpay，已过期，subject=test order 2）
+    //   EPAY0001    （wxpay，待支付，subject=epay 测试商品）
+    //   EPAY0002    （wxpay，待支付，subject=submit 测试）
+    //   EPAY_CB01   （wxpay，已支付，subject=callback flow）
+
+    @Test
+    @Order(20)
+    void step20_merchantOrderSearch_orderNoHitsExactlyOne() throws Exception {
+        // 拿一个真实的平台订单号搜：结果只能是这一条，total=1
+        JsonNode hit = dataOf(getJson("/api/merchant/order/page?orderNo=" + firstOrderNo, merchantToken));
+        assertThat(hit.get("total").asLong()).isEqualTo(1L);
+        assertThat(hit.get("records").size()).isEqualTo(1);
+        assertThat(hit.get("records").get(0).get("orderNo").asText()).isEqualTo(firstOrderNo);
+    }
+
+    @Test
+    @Order(21)
+    void step21_merchantOrderSearch_nonexistentOrderNoReturnsEmpty() throws Exception {
+        // 搜一个根本不存在的订单号：必须是空的，不能像修之前那样把全部订单原样返回
+        JsonNode miss = dataOf(getJson("/api/merchant/order/page?orderNo=ZZZ-NOT-EXIST-9999", merchantToken));
+        assertThat(miss.get("total").asLong()).isZero();
+        assertThat(miss.get("records").size()).isZero();
+    }
+
+    @Test
+    @Order(22)
+    void step22_merchantOrderSearch_outTradeNoFilterMatchesMerchantOrderNumber() throws Exception {
+        // 商户订单号精准命中：IT0000000001 只匹配第一笔
+        JsonNode one = dataOf(getJson("/api/merchant/order/page?outTradeNo=IT0000000001", merchantToken));
+        assertThat(one.get("total").asLong()).isEqualTo(1L);
+        assertThat(one.get("records").get(0).get("outTradeNo").asText()).isEqualTo("IT0000000001");
+
+        // 商户订单号模糊匹配：EPAY 前缀命中 3 笔
+        JsonNode many = dataOf(getJson("/api/merchant/order/page?outTradeNo=EPAY", merchantToken));
+        assertThat(many.get("total").asLong()).isEqualTo(3L);
+
+        // 不存在的商户订单号：空
+        JsonNode miss = dataOf(getJson("/api/merchant/order/page?outTradeNo=NOT-A-REAL-ONE", merchantToken));
+        assertThat(miss.get("total").asLong()).isZero();
+    }
+
+    @Test
+    @Order(23)
+    void step23_merchantOrderSearch_subjectFilterFuzzyMatches() throws Exception {
+        // 商品名称模糊：epay 测试商品 只有一笔
+        JsonNode one = dataOf(getJson("/api/merchant/order/page?subject=epay", merchantToken));
+        assertThat(one.get("total").asLong()).isEqualTo(1L);
+        assertThat(one.get("records").get(0).get("subject").asText()).contains("epay");
+
+        // "order" 命中 IT 两笔（test order 1 / test order 2 里都有 order 关键字）
+        JsonNode two = dataOf(getJson("/api/merchant/order/page?subject=order", merchantToken));
+        assertThat(two.get("total").asLong()).isEqualTo(2L);
+
+        JsonNode miss = dataOf(getJson("/api/merchant/order/page?subject=nothing-here", merchantToken));
+        assertThat(miss.get("total").asLong()).isZero();
+    }
+
+    @Test
+    @Order(24)
+    void step24_merchantOrderSearch_payTypeFilter() throws Exception {
+        // 5 笔全是 wxpay
+        JsonNode wxpay = dataOf(getJson("/api/merchant/order/page?payType=wxpay", merchantToken));
+        assertThat(wxpay.get("total").asLong()).isEqualTo(5L);
+
+        // 支付宝 0 笔
+        JsonNode alipay = dataOf(getJson("/api/merchant/order/page?payType=alipay", merchantToken));
+        assertThat(alipay.get("total").asLong()).isZero();
+    }
+
+    @Test
+    @Order(25)
+    void step25_merchantOrderSearch_statusFilter() throws Exception {
+        // 待支付：EPAY0001 + EPAY0002 = 2
+        JsonNode unpaid = dataOf(getJson("/api/merchant/order/page?status=0", merchantToken));
+        assertThat(unpaid.get("total").asLong()).isEqualTo(2L);
+
+        // 已支付：IT0000000001 + EPAY_CB01 = 2
+        JsonNode paid = dataOf(getJson("/api/merchant/order/page?status=1", merchantToken));
+        assertThat(paid.get("total").asLong()).isEqualTo(2L);
+
+        // 已过期：IT0000000002 = 1
+        JsonNode expired = dataOf(getJson("/api/merchant/order/page?status=2", merchantToken));
+        assertThat(expired.get("total").asLong()).isEqualTo(1L);
+    }
+
+    @Test
+    @Order(26)
+    void step26_merchantOrderSearch_multipleFiltersCombineWithAnd() throws Exception {
+        // 组合筛选：待支付 + outTradeNo 前缀 EPAY —— 命中 EPAY0001 / EPAY0002 = 2
+        JsonNode both = dataOf(getJson(
+                "/api/merchant/order/page?status=0&outTradeNo=EPAY", merchantToken));
+        assertThat(both.get("total").asLong()).isEqualTo(2L);
+
+        // 组合筛选到无解：已过期 + orderNo 只匹配已支付那笔 -> 空
+        JsonNode conflict = dataOf(getJson(
+                "/api/merchant/order/page?status=2&orderNo=" + firstOrderNo, merchantToken));
+        assertThat(conflict.get("total").asLong()).isZero();
+    }
+
+    @Test
+    @Order(27)
+    void step27_adminOrderSearch_orderNoNonexistentReturnsEmpty() throws Exception {
+        // 管理后台的订单列表复用了同一套 pageOrders，顺手锁死一遍：搜不存在的订单号也要空
+        JsonNode miss = dataOf(getJson("/api/admin/order/page?orderNo=ZZZ-NOT-EXIST-9999", adminToken));
+        assertThat(miss.get("total").asLong()).isZero();
+        assertThat(miss.get("records").size()).isZero();
+
+        JsonNode hit = dataOf(getJson("/api/admin/order/page?orderNo=" + firstOrderNo, adminToken));
+        assertThat(hit.get("total").asLong()).isEqualTo(1L);
+        assertThat(hit.get("records").get(0).get("orderNo").asText()).isEqualTo(firstOrderNo);
+    }
+
     /**
      * 按 SignUtil.generateSign 的规则现算签名，创建一笔订单，返回平台订单号
      */
