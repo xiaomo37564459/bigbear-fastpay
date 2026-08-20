@@ -198,6 +198,19 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 
 两个脚本都是幂等的（用了 `IF NOT EXISTS`），误跑两次不会中断部署。
 
+**「密码存法迁移」版本需要执行的迁移脚本清单**（把 MD5 换成 bcrypt 的那一版，`V1_2`）：
+
+| 数据库 | 脚本 | 做了什么 |
+| --- | --- | --- |
+| PostgreSQL（生产） | `db/migration/V1_2__password_hash_bcrypt_pg.sql` | `fp_admin.password`、`fp_merchant.password` 从 64 放宽到 255 字符，容纳 bcrypt |
+| MySQL（本地/老装机） | `db/migration/V1_2__password_hash_bcrypt_mysql.sql` | 同上，MySQL 方言 |
+
+这一版跑迁移的步骤和上面 `V1_1` 完全一样：把 `scp` 和 `psql` 命令里的文件名换成 `V1_2__password_hash_bcrypt_pg.sql` 即可，其余照抄。脚本只改字段宽度、**不动任何一行已有数据**，误跑两次也没有副作用。
+
+> 💡 **这一版漏跑迁移会怎样？** 没有 `V1_1` 那么严重。新密码用的 bcrypt 哈希是 60 个字符，老字段 `VARCHAR(64)` 其实还装得下，所以即使忘了放宽，也不会一登录就 500。放宽到 255 是为了给以后（比如换更强的 Argon2）留余量，属于该做的保险，**请照常跑**，别省。
+>
+> 📌 老账号（历史 MD5 密码）不需要任何人重置：后端新旧格式都认，用户照常登录，**登录成功后系统会自动把这条记录重算成 bcrypt 存回去**，老格式随大家陆续登录自然消失，全程无感。
+
 前端是纯静态文件，替换完立刻生效，不用重启 nginx。
 
 > ⚠️ **上面那两行 `chmod` 每次更新都要跑，不是一次性的。**

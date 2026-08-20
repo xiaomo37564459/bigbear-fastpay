@@ -1,7 +1,6 @@
 package com.fastpay.service.impl;
 
 import cn.hutool.core.util.RandomUtil;
-import cn.hutool.crypto.SecureUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fastpay.common.BusinessException;
@@ -14,6 +13,7 @@ import com.fastpay.entity.PayOrder;
 import com.fastpay.mapper.*;
 import com.fastpay.service.AdminService;
 import com.fastpay.util.JwtUtil;
+import com.fastpay.util.PasswordHasher;
 import com.fastpay.util.PasswordPolicy;
 import com.fastpay.vo.AdminProfileVO;
 import com.fastpay.vo.DashboardVO;
@@ -77,15 +77,20 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
             throw new BusinessException("用户名或密码错误");
         }
 
-        // 验证密码
-        String encryptedPassword = SecureUtil.md5(dto.getPassword());
-        if (!encryptedPassword.equals(admin.getPassword())) {
+        // 验证密码：兼容库里遗留的老格式（无盐 MD5）和新格式（bcrypt）
+        if (!PasswordHasher.matches(dto.getPassword(), admin.getPassword())) {
             throw new BusinessException("用户名或密码错误");
         }
 
         // 检查状态
         if (!Constants.Status.ENABLED.equals(admin.getStatus())) {
             throw new BusinessException("账号已被禁用");
+        }
+
+        // 老格式账号顺手升级成 bcrypt：用户完全无感，一次登录后这条记录就再也不是 MD5 了
+        if (PasswordHasher.isLegacy(admin.getPassword())) {
+            admin.setPassword(PasswordHasher.hash(dto.getPassword()));
+            log.info("管理员 {} 的密码已从老格式升级为 bcrypt", admin.getUsername());
         }
 
         // 更新登录信息
@@ -192,7 +197,7 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
 
         Admin admin = new Admin();
         admin.setUsername(username);
-        admin.setPassword(SecureUtil.md5(passwordPlain));
+        admin.setPassword(PasswordHasher.hash(passwordPlain));
         admin.setNickname("超级管理员");
         admin.setAvatar("/static/avatar/admin.png");
         admin.setStatus(Constants.Status.ENABLED);
@@ -230,8 +235,8 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
     public UpdateCredentialVO updateUsername(Long adminId, UpdateUsernameDTO dto) {
         Admin admin = requireAdmin(adminId);
 
-        // 先用当前密码验身份
-        if (!SecureUtil.md5(dto.getCurrentPassword()).equals(admin.getPassword())) {
+        // 先用当前密码验身份（同时兼容老 MD5 和新 bcrypt）
+        if (!PasswordHasher.matches(dto.getCurrentPassword(), admin.getPassword())) {
             throw BusinessException.badRequest("当前密码不正确");
         }
 
@@ -269,8 +274,8 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
     public UpdateCredentialVO updatePassword(Long adminId, UpdatePasswordDTO dto) {
         Admin admin = requireAdmin(adminId);
 
-        // 先用旧密码验身份
-        if (!SecureUtil.md5(dto.getOldPassword()).equals(admin.getPassword())) {
+        // 先用旧密码验身份（同时兼容老 MD5 和新 bcrypt）
+        if (!PasswordHasher.matches(dto.getOldPassword(), admin.getPassword())) {
             throw BusinessException.badRequest("旧密码不正确");
         }
 
@@ -285,7 +290,7 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
         PasswordPolicy.validate(newPassword);
 
         int newVersion = (admin.getTokenVersion() == null ? 0 : admin.getTokenVersion()) + 1;
-        admin.setPassword(SecureUtil.md5(newPassword));
+        admin.setPassword(PasswordHasher.hash(newPassword));
         admin.setTokenVersion(newVersion);
         this.updateById(admin);
 
