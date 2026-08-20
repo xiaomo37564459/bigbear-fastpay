@@ -160,6 +160,8 @@ CREATE TABLE `fp_pay_order` (
     `notify_status` TINYINT DEFAULT 0 COMMENT '回调通知状态：0-未通知，1-通知成功，2-通知失败',
     `notify_count` INT DEFAULT 0 COMMENT '回调通知次数（已尝试通知的次数）',
     `last_notify_time` DATETIME DEFAULT NULL COMMENT '最后通知时间',
+    `notify_result` VARCHAR(1000) DEFAULT NULL COMMENT '最近一次回调商户返回的内容（截断到 1000 字符）',
+    `notify_error` VARCHAR(500) DEFAULT NULL COMMENT '最近一次回调失败的错误信息（超时/连不上/格式错等）',
     `pay_time` DATETIME DEFAULT NULL COMMENT '支付时间（用户完成支付的时间）',
     `expire_time` DATETIME DEFAULT NULL COMMENT '过期时间（订单超过此时间未支付将自动关闭）',
     `client_ip` VARCHAR(50) DEFAULT NULL COMMENT '客户端IP地址（发起支付请求的客户端IP）',

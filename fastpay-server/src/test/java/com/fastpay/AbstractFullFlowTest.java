@@ -101,6 +101,7 @@ abstract class AbstractFullFlowTest {
     private static Long channelId;
     private static String firstOrderNo;
     private static String secondOrderNo;
+    private static String epayCallbackOrderNo;
 
     @Test
     @Order(1)
@@ -676,6 +677,7 @@ abstract class AbstractFullFlowTest {
             JsonNode create = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
             assertThat(create.get("code").asInt()).isEqualTo(1);
             String epayOrderNo = create.get("trade_no").asText();
+            epayCallbackOrderNo = epayOrderNo;
 
             // 用管理员权限手动确认支付，触发异步回调
             postJson("/api/admin/order/" + epayOrderNo + "/confirm", adminToken, Map.of());
@@ -700,6 +702,234 @@ abstract class AbstractFullFlowTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    @Order(40)
+    void step40_successfulNotifyPersistsResponseAndOrderSource() throws Exception {
+        // 自建本地 HttpServer 处理一次真实回调（返回 "success"），确保它落库后再关服务器
+        // ——不复用 step13 的服务，因为那里在 poll 到请求后立即 stop(0)，会把回写数据库的最后一段掐掉。
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String successOrderNo;
+        try {
+            server.createContext("/notify", exchange -> {
+                byte[] body = "success".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(body);
+                }
+            });
+            server.start();
+            int port = server.getAddress().getPort();
+            String notifyUrl = "http://127.0.0.1:" + port + "/notify";
+
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("pid", merchantNo);
+            params.put("out_trade_no", "EPAY_OK01");
+            params.put("type", "wxpay");
+            params.put("name", "success 回调用例");
+            params.put("money", "0.12");
+            params.put("notify_url", notifyUrl);
+            String sign = EpaySignUtil.generateSign(params, merchantApiSecret);
+            params.put("sign", sign);
+            params.put("sign_type", "MD5");
+
+            JsonNode create = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
+            assertThat(create.get("code").asInt()).isEqualTo(1);
+            successOrderNo = create.get("trade_no").asText();
+
+            postJson("/api/admin/order/" + successOrderNo + "/confirm", adminToken, Map.of());
+            pollUntilNotifyCountAtLeast(successOrderNo, 1);
+        } finally {
+            server.stop(1);
+        }
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT notify_status, notify_count, notify_result, notify_error, order_source " +
+                             "FROM fp_pay_order WHERE order_no = ?")) {
+            ps.setString(1, successOrderNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getInt("notify_status")).isEqualTo(1); // 通知成功
+                assertThat(rs.getInt("notify_count")).isGreaterThanOrEqualTo(1);
+                assertThat(rs.getString("notify_result")).isEqualTo("success");
+                assertThat(rs.getString("notify_error")).isNull();
+                assertThat(rs.getString("order_source")).isEqualTo("epay");
+            }
+        }
+
+        // 走一遍管理后台的详情 API，确认这两个字段真的通过 JSON 出去，不只是躺在数据库里
+        JsonNode adminSuccess = dataOf(getJson("/api/admin/order/" + successOrderNo, adminToken));
+        assertThat(adminSuccess.get("notifyResult").asText()).isEqualTo("success");
+        assertThat(adminSuccess.get("notifyError").isNull()).isTrue();
+    }
+
+    @Test
+    @Order(41)
+    void step41_failedNotifyPersistsErrorMessage() throws Exception {
+        // 造一笔易支付订单，notify_url 指到一个绝对连不上的端口（127.0.0.1:1，特权端口，本地也不会有人监听）
+        // 触发一次确认支付 → 异步回调 → 回调失败 → 错误信息应落库
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("pid", merchantNo);
+        params.put("out_trade_no", "EPAY_FAIL01");
+        params.put("type", "wxpay");
+        params.put("name", "回调失败用例");
+        params.put("money", "0.11");
+        params.put("notify_url", "http://127.0.0.1:1/definitely-unreachable");
+        String sign = EpaySignUtil.generateSign(params, merchantApiSecret);
+        params.put("sign", sign);
+        params.put("sign_type", "MD5");
+
+        JsonNode create = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
+        assertThat(create.get("code").asInt()).isEqualTo(1);
+        String failOrderNo = create.get("trade_no").asText();
+
+        postJson("/api/admin/order/" + failOrderNo + "/confirm", adminToken, Map.of());
+
+        // 等回调线程把失败信息写进库
+        pollUntilNotifyCountAtLeast(failOrderNo, 1);
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT notify_status, notify_result, notify_error FROM fp_pay_order WHERE order_no = ?")) {
+            ps.setString(1, failOrderNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getInt("notify_status")).isEqualTo(2); // 通知失败
+                assertThat(rs.getString("notify_result")).isNull();
+                String err = rs.getString("notify_error");
+                assertThat(err).as("失败原因必须落库").isNotBlank();
+                // 无法预知不同 JDK 上具体是 ConnectException 还是 SocketException，但一定包含 "Connection" 或 "connect" 字样
+                assertThat(err.toLowerCase()).containsAnyOf("connect", "refused", "拒绝", "socket");
+            }
+        }
+
+        // 商户中心侧走一遍详情 API（本商户看本商户订单），确认 notifyError 也通过 JSON 出去
+        JsonNode merchantFail = dataOf(getJson("/api/merchant/order/" + failOrderNo, merchantToken));
+        assertThat(merchantFail.get("notifyError").asText().toLowerCase()).containsAnyOf("connect", "refused", "socket");
+        assertThat(merchantFail.get("notifyResult").isNull()).isTrue();
+    }
+
+    @Test
+    @Order(42)
+    void step42_adminOrderDetailReturnsMerchantShopAndSource() throws Exception {
+        // 详情接口口径要跟列表一致，返回 merchantName / shopName / orderSource
+        JsonNode admin = dataOf(getJson("/api/admin/order/" + firstOrderNo, adminToken));
+        assertThat(admin.get("merchantName").asText()).isEqualTo("IT Test Merchant");
+        assertThat(admin.get("shopName").asText()).isEqualTo("IT Test Shop");
+        // 原生下单没有显式带 order_source，服务端应默认为 native
+        assertThat(admin.get("orderSource").asText()).isEqualTo("native");
+    }
+
+    @Test
+    @Order(43)
+    void step43_merchantOrderDetailReturnsMerchantShopAndSource() throws Exception {
+        JsonNode merchant = dataOf(getJson("/api/merchant/order/" + firstOrderNo, merchantToken));
+        assertThat(merchant.get("merchantName").asText()).isEqualTo("IT Test Merchant");
+        assertThat(merchant.get("shopName").asText()).isEqualTo("IT Test Shop");
+        assertThat(merchant.get("orderSource").asText()).isEqualTo("native");
+    }
+
+    @Test
+    @Order(44)
+    void step44_adminOrderDetailEpaySource() throws Exception {
+        // 易支付进来的订单，详情里 order_source 必须是 epay
+        assertThat(epayCallbackOrderNo).isNotBlank();
+        JsonNode admin = dataOf(getJson("/api/admin/order/" + epayCallbackOrderNo, adminToken));
+        assertThat(admin.get("orderSource").asText()).isEqualTo("epay");
+        assertThat(admin.get("merchantName").asText()).isEqualTo("IT Test Merchant");
+    }
+
+    @Test
+    @Order(45)
+    void step45_orderListIncludesOrderSourceOnBothSides() throws Exception {
+        // 列表接口本来就是查全字段，这里显式断言 order_source 键存在且非空，别哪天有人手抖砍字段
+        JsonNode adminPage = dataOf(getJson("/api/admin/order/page?current=1&size=20", adminToken));
+        JsonNode adminRecords = adminPage.get("records");
+        assertThat(adminRecords.size()).isGreaterThan(0);
+        boolean seenNative = false, seenEpay = false;
+        for (int i = 0; i < adminRecords.size(); i++) {
+            JsonNode row = adminRecords.get(i);
+            assertThat(row.has("orderSource")).as("管理后台列表每条记录都要有 orderSource").isTrue();
+            String src = row.get("orderSource").asText();
+            assertThat(src).isIn("native", "epay");
+            if ("native".equals(src)) seenNative = true;
+            if ("epay".equals(src)) seenEpay = true;
+        }
+        assertThat(seenNative).as("样本里应能看到原生订单").isTrue();
+        assertThat(seenEpay).as("样本里应能看到易支付订单").isTrue();
+
+        JsonNode merchantPage = dataOf(getJson("/api/merchant/order/page?current=1&size=20", merchantToken));
+        JsonNode merchantRecords = merchantPage.get("records");
+        assertThat(merchantRecords.size()).isGreaterThan(0);
+        for (int i = 0; i < merchantRecords.size(); i++) {
+            assertThat(merchantRecords.get(i).has("orderSource"))
+                    .as("商户中心列表每条记录都要有 orderSource").isTrue();
+        }
+    }
+
+    @Test
+    @Order(46)
+    void step46_merchantCannotReadOtherMerchantOrder() throws Exception {
+        // 场景：商户 A 名下有订单，商户 B 名下没有；B 拿到 A 的订单号来查详情，必须被拒。
+        // 这段回归的是 QA 在验收 MTM-157 时发现的越权：改之前详情接口不校验归属，
+        // 商户 B 能把 A 的商户名、店铺名、回调返回内容整个读走。
+        String otherUsername = "it_merchant_02";
+        String otherPassword = "TestPass456";
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("merchantName", "IT Test Merchant 2");
+        body.put("username", otherUsername);
+        body.put("password", otherPassword);
+        body.put("contactName", "Tester");
+        body.put("contactPhone", "13800000001");
+        postJson("/api/admin/merchant", adminToken, body);
+
+        JsonNode login = dataOf(postJson("/api/merchant/login", null,
+                Map.of("username", otherUsername, "password", otherPassword)));
+        String otherToken = login.get("token").asText();
+        assertThat(otherToken).isNotBlank();
+
+        // 拿 B 的令牌查 A 的订单，接口层面必须回错：不放行、不返回订单数据
+        MvcResult crossResult = mockMvc.perform(get("/api/merchant/order/" + firstOrderNo)
+                        .header("Authorization", "Bearer " + otherToken))
+                .andReturn();
+        JsonNode crossBody = objectMapper.readTree(crossResult.getResponse().getContentAsByteArray());
+        assertThat(crossBody.get("code").asInt()).as("越权访问必须被拒").isNotEqualTo(200);
+        assertThat(crossBody.get("message").asText()).contains("无权"); // "无权"
+        assertThat(crossBody.has("data") && !crossBody.get("data").isNull() ? crossBody.get("data") : null)
+                .as("拒绝时不许把订单数据带出去").isNull();
+
+        // 反向验证：B 查自己名下的订单列表应该是空的（避免因为 B 有订单误判上面的越权检查）
+        JsonNode ownPage = dataOf(getJson("/api/merchant/order/page?current=1&size=10", otherToken));
+        assertThat(ownPage.get("total").asLong()).isEqualTo(0L);
+
+        // 反向验证：管理员用同一个订单号查，还是能查到（管理员不走归属校验）
+        JsonNode adminView = dataOf(getJson("/api/admin/order/" + firstOrderNo, adminToken));
+        assertThat(adminView.get("merchantName").asText()).isEqualTo("IT Test Merchant");
+    }
+
+    /**
+     * 轮询直到 fp_pay_order.notify_count >= expected 或超时（15 秒）。
+     * 用于测试等异步回调线程把结果落库。
+     */
+    private void pollUntilNotifyCountAtLeast(String orderNo, int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 15_000L;
+        while (System.currentTimeMillis() < deadline) {
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "SELECT notify_count FROM fp_pay_order WHERE order_no = ?")) {
+                ps.setString(1, orderNo);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next() && rs.getInt("notify_count") >= expected) {
+                        return;
+                    }
+                }
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("超时等待 orderNo=" + orderNo + " 的 notify_count 达到 " + expected);
     }
 
     @Test

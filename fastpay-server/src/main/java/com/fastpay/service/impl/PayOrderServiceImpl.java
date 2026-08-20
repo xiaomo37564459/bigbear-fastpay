@@ -278,6 +278,34 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
     }
 
     @Override
+    public PayOrder getOrderDetail(String orderNo, Long merchantId) {
+        PayOrder order = this.queryOrder(orderNo);
+        if (order == null) {
+            return null;
+        }
+        // 归属校验：merchantId != null 表示商户中心侧调用，只能看自己的订单，
+        // 抛的异常和 confirmPay / closeOrder / resendNotify 三处保持一致。
+        // 管理后台传 null，直接放行。
+        if (merchantId != null && !merchantId.equals(order.getMerchantId())) {
+            throw new BusinessException("无权操作此订单");
+        }
+        // 补齐商户名和店铺名，跟列表接口口径保持一致
+        if (order.getMerchantId() != null) {
+            Merchant merchant = merchantMapper.selectById(order.getMerchantId());
+            if (merchant != null) {
+                order.setMerchantName(merchant.getMerchantName());
+            }
+        }
+        if (order.getShopId() != null) {
+            Shop shop = shopMapper.selectById(order.getShopId());
+            if (shop != null) {
+                order.setShopName(shop.getShopName());
+            }
+        }
+        return order;
+    }
+
+    @Override
     public PayOrder queryOrderByOutTradeNo(String merchantNo, String outTradeNo) {
         Merchant merchant = merchantMapper.selectOne(new LambdaQueryWrapper<Merchant>()
                 .eq(Merchant::getMerchantNo, merchantNo));
@@ -558,6 +586,9 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             order.setNotifyStatus("success".equalsIgnoreCase(response) ? 1 : 2);
             order.setNotifyCount(order.getNotifyCount() + 1);
             order.setLastNotifyTime(LocalDateTime.now());
+            // 存商户返回内容，截断到 NOTIFY_RESULT_MAX_LEN；成功路径下 notify_error 清空
+            order.setNotifyResult(truncate(response, NOTIFY_RESULT_MAX_LEN));
+            order.setNotifyError(null);
             this.updateById(order);
 
         } catch (Exception e) {
@@ -566,8 +597,44 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             order.setNotifyStatus(2);
             order.setNotifyCount(order.getNotifyCount() + 1);
             order.setLastNotifyTime(LocalDateTime.now());
+            // 存报错信息（异常类名 + message，截断到 NOTIFY_ERROR_MAX_LEN）；失败路径下 notify_result 清空
+            order.setNotifyResult(null);
+            order.setNotifyError(truncate(formatError(e), NOTIFY_ERROR_MAX_LEN));
             this.updateById(order);
         }
+    }
+
+    /** notify_result 最大存储长度，超出直接截断，跟建表脚本的 VARCHAR(1000) 对齐 */
+    private static final int NOTIFY_RESULT_MAX_LEN = 1000;
+
+    /** notify_error 最大存储长度，超出直接截断，跟建表脚本的 VARCHAR(500) 对齐 */
+    private static final int NOTIFY_ERROR_MAX_LEN = 500;
+
+    /**
+     * 长度超限时按 code point 边界截断，避免把 UTF-16 代理对切成半个字符导致乱码。
+     */
+    private static String truncate(String s, int maxLen) {
+        if (s == null || s.length() <= maxLen) {
+            return s;
+        }
+        // 若截断点正好落在代理对中间，往前退一格
+        int end = maxLen;
+        if (Character.isHighSurrogate(s.charAt(end - 1))) {
+            end--;
+        }
+        return s.substring(0, end);
+    }
+
+    /**
+     * 把异常拍成 "类名: message" 一行，方便直接展示给运营看，不要塞完整栈。
+     */
+    private static String formatError(Throwable e) {
+        String msg = e.getMessage();
+        String name = e.getClass().getSimpleName();
+        if (msg == null || msg.isEmpty()) {
+            return name;
+        }
+        return name + ": " + msg;
     }
 
     /**

@@ -244,6 +244,8 @@ CREATE TABLE fp_pay_order (
     notify_status SMALLINT DEFAULT 0,
     notify_count INT DEFAULT 0,
     last_notify_time TIMESTAMP DEFAULT NULL,
+    notify_result VARCHAR(1000) DEFAULT NULL,
+    notify_error VARCHAR(500) DEFAULT NULL,
     pay_time TIMESTAMP DEFAULT NULL,
     expire_time TIMESTAMP DEFAULT NULL,
     client_ip VARCHAR(50) DEFAULT NULL,
@@ -280,6 +282,8 @@ COMMENT ON COLUMN fp_pay_order.return_url IS '支付成功跳转地址（支付�
 COMMENT ON COLUMN fp_pay_order.notify_status IS '回调通知状态：0-未通知，1-通知成功，2-通知失败';
 COMMENT ON COLUMN fp_pay_order.notify_count IS '回调通知次数（已尝试通知的次数）';
 COMMENT ON COLUMN fp_pay_order.last_notify_time IS '最后通知时间';
+COMMENT ON COLUMN fp_pay_order.notify_result IS '最近一次回调商户返回的内容（截断到 1000 字符）';
+COMMENT ON COLUMN fp_pay_order.notify_error IS '最近一次回调失败的错误信息（超时/连不上/格式错等）';
 COMMENT ON COLUMN fp_pay_order.pay_time IS '支付时间（用户完成支付的时间）';
 COMMENT ON COLUMN fp_pay_order.expire_time IS '过期时间（订单超过此时间未支付将自动关闭）';
 COMMENT ON COLUMN fp_pay_order.client_ip IS '客户端IP地址（发起支付请求的客户端IP）';
