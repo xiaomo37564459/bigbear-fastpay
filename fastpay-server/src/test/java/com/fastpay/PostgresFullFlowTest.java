@@ -50,4 +50,24 @@ class PostgresFullFlowTest extends AbstractFullFlowTest {
         registry.add("spring.datasource.username", () -> "postgres");
         registry.add("spring.datasource.password", () -> "postgres");
     }
+
+    @Override
+    protected String migrationCloseConflictingUnpaidSql() {
+        // PG 允许 UPDATE 里 SELECT 同一张表
+        return "UPDATE fp_pay_order SET status = 3 " +
+                "WHERE status = 0 " +
+                "  AND id NOT IN (" +
+                "      SELECT MIN(id) FROM fp_pay_order " +
+                "      WHERE status = 0 " +
+                "      GROUP BY merchant_id, pay_type, pay_amount" +
+                "  )";
+    }
+
+    @Override
+    protected String migrationInsertLegacyPendingSql() {
+        return "INSERT INTO fp_pending_pay_amount (merchant_id, pay_type, pay_amount, order_no, expire_time) " +
+                "SELECT merchant_id, pay_type, pay_amount, order_no, expire_time " +
+                "FROM fp_pay_order WHERE status = 0 " +
+                "ON CONFLICT (merchant_id, pay_type, pay_amount) DO NOTHING";
+    }
 }

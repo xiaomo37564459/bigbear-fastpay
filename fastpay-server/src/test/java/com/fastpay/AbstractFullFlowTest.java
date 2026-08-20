@@ -86,6 +86,9 @@ abstract class AbstractFullFlowTest {
     private PayOrderService payOrderService;
 
     @Autowired
+    private com.fastpay.service.PendingPayAmountService pendingPayAmountService;
+
+    @Autowired
     private DataSource dataSource;
 
     private static String adminToken;
@@ -98,6 +101,7 @@ abstract class AbstractFullFlowTest {
     private static Long channelId;
     private static String firstOrderNo;
     private static String secondOrderNo;
+    private static String epayCallbackOrderNo;
 
     @Test
     @Order(1)
@@ -364,6 +368,274 @@ abstract class AbstractFullFlowTest {
         assertThat(postResp.get("msg").asText()).contains("退款");
     }
 
+    // ============================================================
+    // 以下 step14 ~ step20 覆盖 MTM-170：pay_amount 微调 + 撞单认对人 + 幂等 + 未匹配落表 +
+    // 易支付 money 回传原始 amount + release 契约 + 迁移脚本行为。
+    //
+    // 排在 MTM-180 的 step20~step27 之后（@Order 30~36），因为 MTM-180 那批"商户订单查询筛选"测试
+    // 拿写死的订单数量做断言：本商户下 wxpay=5、UNPAID=2、EPAY 前缀=3 …… 而这里的 step14/15/17/18
+    // 会往同一商户塞额外的订单（撞单/未匹配/易支付），如果放前面跑，MTM-180 那几条数量断言会全红。
+    //
+    // 之前 @Order 用的是 14~20，其中 step20_migrationScript... 还跟 MTM-180 的
+    // step20_merchantOrderSearch_orderNoHitsExactlyOne 撞号，本次一并挪开。
+    // ============================================================
+
+    @Test
+    @Order(30)
+    void step14_sameAmountOrdersGetDistinctPayAmounts() throws Exception {
+        String orderA = createSignedOrder("IT_C0000001", "5.00", "撞单-A");
+        String orderB = createSignedOrder("IT_C0000002", "5.00", "撞单-B");
+
+        BigDecimal payAmountA = readPayAmount(orderA);
+        BigDecimal payAmountB = readPayAmount(orderB);
+
+        // 关键：两笔订单同 amount，pay_amount 必须不同
+        assertThat(payAmountA).isNotNull();
+        assertThat(payAmountB).isNotNull();
+        assertThat(payAmountA).isNotEqualByComparingTo(payAmountB);
+        // 第一笔应当拿到原始金额
+        assertThat(payAmountA).isEqualByComparingTo(new BigDecimal("5.00"));
+    }
+
+    @Test
+    @Order(31)
+    void step15_notifyMatchesByPayAmountNotByAmount() throws Exception {
+        // 场景：A 先下单 5.55 不付、B 后下单 5.55 付款，通知带的是 B 的 pay_amount
+        String orderA = createSignedOrder("IT_M0000001", "5.55", "撞单认对人-A");
+        String orderB = createSignedOrder("IT_M0000002", "5.55", "撞单认对人-B");
+        BigDecimal payAmountA = readPayAmount(orderA);
+        BigDecimal payAmountB = readPayAmount(orderB);
+        assertThat(payAmountA).isNotEqualByComparingTo(payAmountB);
+
+        // 用 B 的 pay_amount 发通知：老版本会把 A 认成已支付（撞单 bug），修复后必须是 B
+        sendWxPayNotify(payAmountB.toPlainString());
+
+        JsonNode aStatus = dataOf(getJson("/api/pay/status/" + orderA, null));
+        assertThat(aStatus.get("status").asInt()).isEqualTo(0); // A 依然待支付
+
+        JsonNode bStatus = dataOf(getJson("/api/pay/status/" + orderB, null));
+        assertThat(bStatus.get("status").asInt()).isEqualTo(1); // B 已支付
+        assertThat(bStatus.get("payAmount").decimalValue()).isEqualByComparingTo(payAmountB);
+    }
+
+    @Test
+    @Order(32)
+    void step16_duplicateNotifyIsIdempotent() throws Exception {
+        String orderNo = createSignedOrder("IT_D0000001", "6.66", "重复通知幂等");
+        BigDecimal payAmount = readPayAmount(orderNo);
+
+        BigDecimal merchantTotalAmountBefore = readMerchantTotalAmount(merchantId);
+        long merchantTotalCountBefore = readMerchantTotalCount(merchantId);
+
+        // 连发两次同金额通知：老版本可能双重累加统计 + 双重回调，修复后必须只算一次
+        sendWxPayNotify(payAmount.toPlainString());
+        sendWxPayNotify(payAmount.toPlainString());
+
+        JsonNode status = dataOf(getJson("/api/pay/status/" + orderNo, null));
+        assertThat(status.get("status").asInt()).isEqualTo(1);
+
+        long merchantTotalCountAfter = readMerchantTotalCount(merchantId);
+        BigDecimal merchantTotalAmountAfter = readMerchantTotalAmount(merchantId);
+        assertThat(merchantTotalCountAfter - merchantTotalCountBefore).isEqualTo(1);
+        assertThat(merchantTotalAmountAfter.subtract(merchantTotalAmountBefore))
+                .isEqualByComparingTo(payAmount);
+    }
+
+    @Test
+    @Order(33)
+    void step17_unmatchedNotifyIsRecordedAndVisibleInAdmin() throws Exception {
+        long unmatchedBefore = countUnmatchedNotifyByAmount(new BigDecimal("999.99"));
+
+        // 发一笔完全对不上任何订单的金额
+        sendWxPayNotify("999.99");
+
+        long unmatchedAfter = countUnmatchedNotifyByAmount(new BigDecimal("999.99"));
+        assertThat(unmatchedAfter - unmatchedBefore).isEqualTo(1);
+
+        // 管理后台也能查到这条待处理记录
+        JsonNode page = dataOf(getJson(
+                "/api/admin/unmatched-notify/page?current=1&size=50&handleStatus=0", adminToken));
+        assertThat(page.get("total").asLong()).isGreaterThanOrEqualTo(1L);
+        boolean found = false;
+        for (JsonNode row : page.get("records")) {
+            if (row.get("amount").decimalValue().compareTo(new BigDecimal("999.99")) == 0) {
+                found = true;
+                assertThat(row.get("handleStatus").asInt()).isEqualTo(0);
+                assertThat(row.get("payType").asText()).isEqualTo("wxpay");
+                break;
+            }
+        }
+        assertThat(found).as("后台未匹配通知列表应包含刚发的 999.99 元通知").isTrue();
+    }
+
+    @Test
+    @Order(34)
+    void step18_epayCallbackMoneyKeepsOriginalAmount() throws Exception {
+        // 起本地 HTTP 服务捕获易支付回调
+        BlockingQueue<CapturedRequest> captured = new ArrayBlockingQueue<>(4);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try {
+            server.createContext("/notify", exchange -> {
+                CapturedRequest req = new CapturedRequest();
+                req.method = exchange.getRequestMethod();
+                req.rawQuery = exchange.getRequestURI().getRawQuery();
+                captured.offer(req);
+                byte[] body = "success".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(body);
+                }
+            });
+            server.start();
+
+            int port = server.getAddress().getPort();
+            String notifyUrl = "http://127.0.0.1:" + port + "/notify";
+
+            // A 先下 8.88，占掉 pay_amount=8.88
+            Map<String, String> paramsA = new LinkedHashMap<>();
+            paramsA.put("pid", merchantNo);
+            paramsA.put("out_trade_no", "EPAY_M001A");
+            paramsA.put("type", "wxpay");
+            paramsA.put("name", "money 测试 A");
+            paramsA.put("money", "8.88");
+            paramsA.put("notify_url", "http://127.0.0.1:1/no-op-A");
+            paramsA.put("sign", EpaySignUtil.generateSign(paramsA, merchantApiSecret));
+            paramsA.put("sign_type", "MD5");
+            objectMapper.readTree(postForm("/mapi.php", paramsA).getResponse().getContentAsByteArray());
+
+            // B 后下 8.88，pay_amount 会被微调（比如 8.89）
+            Map<String, String> paramsB = new LinkedHashMap<>();
+            paramsB.put("pid", merchantNo);
+            paramsB.put("out_trade_no", "EPAY_M001B");
+            paramsB.put("type", "wxpay");
+            paramsB.put("name", "money 测试 B");
+            paramsB.put("money", "8.88");
+            paramsB.put("notify_url", notifyUrl);
+            paramsB.put("sign", EpaySignUtil.generateSign(paramsB, merchantApiSecret));
+            paramsB.put("sign_type", "MD5");
+            JsonNode createB = objectMapper.readTree(
+                    postForm("/mapi.php", paramsB).getResponse().getContentAsByteArray());
+            String bTradeNo = createB.get("trade_no").asText();
+
+            BigDecimal payAmountB = readPayAmount(bTradeNo);
+            assertThat(payAmountB).isNotEqualByComparingTo(new BigDecimal("8.88"));
+
+            // 手动确认 B，触发易支付回调
+            postJson("/api/admin/order/" + bTradeNo + "/confirm", adminToken, Map.of());
+
+            CapturedRequest cb = captured.poll(15, TimeUnit.SECONDS);
+            assertThat(cb).as("在 15s 内应收到易支付回调").isNotNull();
+            Map<String, String> parsed = parseQuery(cb.rawQuery);
+            // 关键：money 必须是"原始订单金额" 8.88，不是微调后的 pay_amount
+            // sub2api 那边记的订单是 8.88，我们回传 8.89 它会拒收 → 付了钱不给用户充值
+            assertThat(parsed.get("money")).isEqualTo("8.88");
+            assertThat(parsed.get("trade_status")).isEqualTo("TRADE_SUCCESS");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Order(35)
+    void step19_releaseByAmountOnlyDoesNotStealOtherOrdersReservation() throws Exception {
+        // 场景：老 release() 只按 (merchant, payType, amount) 三个条件删。并发场景下（比如
+        // 一笔已过期订单被两条路径同时触发释放），中间又有一笔新订单刚好抢到了同一金额，
+        // 第二次释放会把新订单的占位一起删掉——撞单原样复发。加了 orderNo 保护后就不会。
+        String orderA = createSignedOrder("IT_R0000001", "7.77", "release 保护-A");
+        BigDecimal payAmountA = readPayAmount(orderA);
+
+        long inTableBefore = countPendingPayAmount(payAmountA);
+        assertThat(inTableBefore).as("下单后 A 应该在占位表里").isEqualTo(1L);
+
+        // 用一个别的订单号去释放——因为 order_no 不匹配，什么都不会删
+        pendingPayAmountService.release(merchantId, "wxpay", payAmountA, "SOME_OTHER_ORDER_NO");
+        long inTableAfterWrongOrderNo = countPendingPayAmount(payAmountA);
+        assertThat(inTableAfterWrongOrderNo)
+                .as("传别的订单号，占位不该被误删")
+                .isEqualTo(1L);
+
+        // 用真正的订单号释放，才会真的删掉
+        pendingPayAmountService.release(merchantId, "wxpay", payAmountA, orderA);
+        long inTableAfterCorrectOrderNo = countPendingPayAmount(payAmountA);
+        assertThat(inTableAfterCorrectOrderNo)
+                .as("传本订单号，占位应该被释放")
+                .isEqualTo(0L);
+    }
+
+    @Test
+    @Order(36)
+    void step20_migrationScriptCollapsesLegacyUnpaidConflicts() throws Exception {
+        // 目的：验证 V1_2 迁移脚本的 4a/4b 两步。老库升级时如果有多笔 UNPAID 撞金额，
+        // 4a 只保留最早创建的那笔、其它关掉；4b 把剩下的塞进占位表，让新版后端一启动
+        // 就能自动避开这些金额。没有这一步，升级窗口内新老订单会再撞一次。
+        //
+        // 跨库差异：MySQL 4a 的 UPDATE 不能直接 SELECT 同一张表，要嵌套 SELECT 骗过语法限制；
+        // PG 无此限制。SQL 由子类各自提供。
+
+        long merchantIdForTest = merchantId;
+        Long shopIdForTest = shopId;
+        // 构造 3 笔同 pay_amount=12.34 的 legacy UNPAID（创建时间明确错开），
+        // 1 笔独占 pay_amount=12.35 的 legacy UNPAID，
+        // 1 笔同 pay_amount=12.34 但 status=1 的老订单（不能被误关）
+        LocalDateTime future = LocalDateTime.now().plusHours(1);
+        String orderOldest = "LEGACY_00001";
+        String orderMiddle = "LEGACY_00002";
+        String orderNewest = "LEGACY_00003";
+        String orderOtherAmount = "LEGACY_00004";
+        String orderPaid = "LEGACY_00005";
+        try (Connection conn = dataSource.getConnection()) {
+            insertLegacyOrder(conn, orderOldest, "LEG_OT_1", merchantIdForTest, shopIdForTest,
+                    new BigDecimal("12.34"), new BigDecimal("12.34"), 0, future,
+                    LocalDateTime.now().minusMinutes(10));
+            insertLegacyOrder(conn, orderMiddle, "LEG_OT_2", merchantIdForTest, shopIdForTest,
+                    new BigDecimal("12.34"), new BigDecimal("12.34"), 0, future,
+                    LocalDateTime.now().minusMinutes(8));
+            insertLegacyOrder(conn, orderNewest, "LEG_OT_3", merchantIdForTest, shopIdForTest,
+                    new BigDecimal("12.34"), new BigDecimal("12.34"), 0, future,
+                    LocalDateTime.now().minusMinutes(6));
+            insertLegacyOrder(conn, orderOtherAmount, "LEG_OT_4", merchantIdForTest, shopIdForTest,
+                    new BigDecimal("12.35"), new BigDecimal("12.35"), 0, future,
+                    LocalDateTime.now().minusMinutes(5));
+            insertLegacyOrder(conn, orderPaid, "LEG_OT_5", merchantIdForTest, shopIdForTest,
+                    new BigDecimal("12.34"), new BigDecimal("12.34"), 1, future,
+                    LocalDateTime.now().minusMinutes(4));
+        }
+
+        // 执行 4a: 关掉冲突老 UNPAID（保留最早的）；4b: 塞进占位表
+        try (Connection conn = dataSource.getConnection()) {
+            try (var st = conn.createStatement()) {
+                st.execute(migrationCloseConflictingUnpaidSql());
+            }
+            try (var st = conn.createStatement()) {
+                st.execute(migrationInsertLegacyPendingSql());
+            }
+        }
+
+        // 断言：
+        // 1) orderOldest（最早）依然 UNPAID
+        assertThat(readOrderStatus(orderOldest)).isEqualTo(0);
+        // 2) middle / newest 被关掉
+        assertThat(readOrderStatus(orderMiddle)).isEqualTo(3);
+        assertThat(readOrderStatus(orderNewest)).isEqualTo(3);
+        // 3) 独占金额的 UNPAID 不受影响
+        assertThat(readOrderStatus(orderOtherAmount)).isEqualTo(0);
+        // 4) PAID 老订单不受影响
+        assertThat(readOrderStatus(orderPaid)).isEqualTo(1);
+        // 5) 占位表：应该多出恰好 2 行：orderOldest / orderOtherAmount
+        assertThat(countPendingPayAmountByOrderNo(orderOldest)).isEqualTo(1L);
+        assertThat(countPendingPayAmountByOrderNo(orderOtherAmount)).isEqualTo(1L);
+        // 6) 被关掉的两笔不该出现在占位表里
+        assertThat(countPendingPayAmountByOrderNo(orderMiddle)).isEqualTo(0L);
+        assertThat(countPendingPayAmountByOrderNo(orderNewest)).isEqualTo(0L);
+        // 7) 幂等：脚本再跑一次不会报错
+        try (Connection conn = dataSource.getConnection()) {
+            try (var st = conn.createStatement()) {
+                st.execute(migrationInsertLegacyPendingSql());
+            }
+        }
+        assertThat(countPendingPayAmountByOrderNo(orderOldest)).isEqualTo(1L);
+    }
+
     @Test
     @Order(13)
     void step13_epaySourceOrderCallbackIsGetWithEpayFormat() throws Exception {
@@ -405,6 +677,7 @@ abstract class AbstractFullFlowTest {
             JsonNode create = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
             assertThat(create.get("code").asInt()).isEqualTo(1);
             String epayOrderNo = create.get("trade_no").asText();
+            epayCallbackOrderNo = epayOrderNo;
 
             // 用管理员权限手动确认支付，触发异步回调
             postJson("/api/admin/order/" + epayOrderNo + "/confirm", adminToken, Map.of());
@@ -429,6 +702,234 @@ abstract class AbstractFullFlowTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    @Order(40)
+    void step40_successfulNotifyPersistsResponseAndOrderSource() throws Exception {
+        // 自建本地 HttpServer 处理一次真实回调（返回 "success"），确保它落库后再关服务器
+        // ——不复用 step13 的服务，因为那里在 poll 到请求后立即 stop(0)，会把回写数据库的最后一段掐掉。
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String successOrderNo;
+        try {
+            server.createContext("/notify", exchange -> {
+                byte[] body = "success".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(body);
+                }
+            });
+            server.start();
+            int port = server.getAddress().getPort();
+            String notifyUrl = "http://127.0.0.1:" + port + "/notify";
+
+            Map<String, String> params = new LinkedHashMap<>();
+            params.put("pid", merchantNo);
+            params.put("out_trade_no", "EPAY_OK01");
+            params.put("type", "wxpay");
+            params.put("name", "success 回调用例");
+            params.put("money", "0.12");
+            params.put("notify_url", notifyUrl);
+            String sign = EpaySignUtil.generateSign(params, merchantApiSecret);
+            params.put("sign", sign);
+            params.put("sign_type", "MD5");
+
+            JsonNode create = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
+            assertThat(create.get("code").asInt()).isEqualTo(1);
+            successOrderNo = create.get("trade_no").asText();
+
+            postJson("/api/admin/order/" + successOrderNo + "/confirm", adminToken, Map.of());
+            pollUntilNotifyCountAtLeast(successOrderNo, 1);
+        } finally {
+            server.stop(1);
+        }
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT notify_status, notify_count, notify_result, notify_error, order_source " +
+                             "FROM fp_pay_order WHERE order_no = ?")) {
+            ps.setString(1, successOrderNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getInt("notify_status")).isEqualTo(1); // 通知成功
+                assertThat(rs.getInt("notify_count")).isGreaterThanOrEqualTo(1);
+                assertThat(rs.getString("notify_result")).isEqualTo("success");
+                assertThat(rs.getString("notify_error")).isNull();
+                assertThat(rs.getString("order_source")).isEqualTo("epay");
+            }
+        }
+
+        // 走一遍管理后台的详情 API，确认这两个字段真的通过 JSON 出去，不只是躺在数据库里
+        JsonNode adminSuccess = dataOf(getJson("/api/admin/order/" + successOrderNo, adminToken));
+        assertThat(adminSuccess.get("notifyResult").asText()).isEqualTo("success");
+        assertThat(adminSuccess.get("notifyError").isNull()).isTrue();
+    }
+
+    @Test
+    @Order(41)
+    void step41_failedNotifyPersistsErrorMessage() throws Exception {
+        // 造一笔易支付订单，notify_url 指到一个绝对连不上的端口（127.0.0.1:1，特权端口，本地也不会有人监听）
+        // 触发一次确认支付 → 异步回调 → 回调失败 → 错误信息应落库
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("pid", merchantNo);
+        params.put("out_trade_no", "EPAY_FAIL01");
+        params.put("type", "wxpay");
+        params.put("name", "回调失败用例");
+        params.put("money", "0.11");
+        params.put("notify_url", "http://127.0.0.1:1/definitely-unreachable");
+        String sign = EpaySignUtil.generateSign(params, merchantApiSecret);
+        params.put("sign", sign);
+        params.put("sign_type", "MD5");
+
+        JsonNode create = objectMapper.readTree(postForm("/mapi.php", params).getResponse().getContentAsByteArray());
+        assertThat(create.get("code").asInt()).isEqualTo(1);
+        String failOrderNo = create.get("trade_no").asText();
+
+        postJson("/api/admin/order/" + failOrderNo + "/confirm", adminToken, Map.of());
+
+        // 等回调线程把失败信息写进库
+        pollUntilNotifyCountAtLeast(failOrderNo, 1);
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT notify_status, notify_result, notify_error FROM fp_pay_order WHERE order_no = ?")) {
+            ps.setString(1, failOrderNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getInt("notify_status")).isEqualTo(2); // 通知失败
+                assertThat(rs.getString("notify_result")).isNull();
+                String err = rs.getString("notify_error");
+                assertThat(err).as("失败原因必须落库").isNotBlank();
+                // 无法预知不同 JDK 上具体是 ConnectException 还是 SocketException，但一定包含 "Connection" 或 "connect" 字样
+                assertThat(err.toLowerCase()).containsAnyOf("connect", "refused", "拒绝", "socket");
+            }
+        }
+
+        // 商户中心侧走一遍详情 API（本商户看本商户订单），确认 notifyError 也通过 JSON 出去
+        JsonNode merchantFail = dataOf(getJson("/api/merchant/order/" + failOrderNo, merchantToken));
+        assertThat(merchantFail.get("notifyError").asText().toLowerCase()).containsAnyOf("connect", "refused", "socket");
+        assertThat(merchantFail.get("notifyResult").isNull()).isTrue();
+    }
+
+    @Test
+    @Order(42)
+    void step42_adminOrderDetailReturnsMerchantShopAndSource() throws Exception {
+        // 详情接口口径要跟列表一致，返回 merchantName / shopName / orderSource
+        JsonNode admin = dataOf(getJson("/api/admin/order/" + firstOrderNo, adminToken));
+        assertThat(admin.get("merchantName").asText()).isEqualTo("IT Test Merchant");
+        assertThat(admin.get("shopName").asText()).isEqualTo("IT Test Shop");
+        // 原生下单没有显式带 order_source，服务端应默认为 native
+        assertThat(admin.get("orderSource").asText()).isEqualTo("native");
+    }
+
+    @Test
+    @Order(43)
+    void step43_merchantOrderDetailReturnsMerchantShopAndSource() throws Exception {
+        JsonNode merchant = dataOf(getJson("/api/merchant/order/" + firstOrderNo, merchantToken));
+        assertThat(merchant.get("merchantName").asText()).isEqualTo("IT Test Merchant");
+        assertThat(merchant.get("shopName").asText()).isEqualTo("IT Test Shop");
+        assertThat(merchant.get("orderSource").asText()).isEqualTo("native");
+    }
+
+    @Test
+    @Order(44)
+    void step44_adminOrderDetailEpaySource() throws Exception {
+        // 易支付进来的订单，详情里 order_source 必须是 epay
+        assertThat(epayCallbackOrderNo).isNotBlank();
+        JsonNode admin = dataOf(getJson("/api/admin/order/" + epayCallbackOrderNo, adminToken));
+        assertThat(admin.get("orderSource").asText()).isEqualTo("epay");
+        assertThat(admin.get("merchantName").asText()).isEqualTo("IT Test Merchant");
+    }
+
+    @Test
+    @Order(45)
+    void step45_orderListIncludesOrderSourceOnBothSides() throws Exception {
+        // 列表接口本来就是查全字段，这里显式断言 order_source 键存在且非空，别哪天有人手抖砍字段
+        JsonNode adminPage = dataOf(getJson("/api/admin/order/page?current=1&size=20", adminToken));
+        JsonNode adminRecords = adminPage.get("records");
+        assertThat(adminRecords.size()).isGreaterThan(0);
+        boolean seenNative = false, seenEpay = false;
+        for (int i = 0; i < adminRecords.size(); i++) {
+            JsonNode row = adminRecords.get(i);
+            assertThat(row.has("orderSource")).as("管理后台列表每条记录都要有 orderSource").isTrue();
+            String src = row.get("orderSource").asText();
+            assertThat(src).isIn("native", "epay");
+            if ("native".equals(src)) seenNative = true;
+            if ("epay".equals(src)) seenEpay = true;
+        }
+        assertThat(seenNative).as("样本里应能看到原生订单").isTrue();
+        assertThat(seenEpay).as("样本里应能看到易支付订单").isTrue();
+
+        JsonNode merchantPage = dataOf(getJson("/api/merchant/order/page?current=1&size=20", merchantToken));
+        JsonNode merchantRecords = merchantPage.get("records");
+        assertThat(merchantRecords.size()).isGreaterThan(0);
+        for (int i = 0; i < merchantRecords.size(); i++) {
+            assertThat(merchantRecords.get(i).has("orderSource"))
+                    .as("商户中心列表每条记录都要有 orderSource").isTrue();
+        }
+    }
+
+    @Test
+    @Order(46)
+    void step46_merchantCannotReadOtherMerchantOrder() throws Exception {
+        // 场景：商户 A 名下有订单，商户 B 名下没有；B 拿到 A 的订单号来查详情，必须被拒。
+        // 这段回归的是 QA 在验收 MTM-157 时发现的越权：改之前详情接口不校验归属，
+        // 商户 B 能把 A 的商户名、店铺名、回调返回内容整个读走。
+        String otherUsername = "it_merchant_02";
+        String otherPassword = "TestPass456";
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("merchantName", "IT Test Merchant 2");
+        body.put("username", otherUsername);
+        body.put("password", otherPassword);
+        body.put("contactName", "Tester");
+        body.put("contactPhone", "13800000001");
+        postJson("/api/admin/merchant", adminToken, body);
+
+        JsonNode login = dataOf(postJson("/api/merchant/login", null,
+                Map.of("username", otherUsername, "password", otherPassword)));
+        String otherToken = login.get("token").asText();
+        assertThat(otherToken).isNotBlank();
+
+        // 拿 B 的令牌查 A 的订单，接口层面必须回错：不放行、不返回订单数据
+        MvcResult crossResult = mockMvc.perform(get("/api/merchant/order/" + firstOrderNo)
+                        .header("Authorization", "Bearer " + otherToken))
+                .andReturn();
+        JsonNode crossBody = objectMapper.readTree(crossResult.getResponse().getContentAsByteArray());
+        assertThat(crossBody.get("code").asInt()).as("越权访问必须被拒").isNotEqualTo(200);
+        assertThat(crossBody.get("message").asText()).contains("无权"); // "无权"
+        assertThat(crossBody.has("data") && !crossBody.get("data").isNull() ? crossBody.get("data") : null)
+                .as("拒绝时不许把订单数据带出去").isNull();
+
+        // 反向验证：B 查自己名下的订单列表应该是空的（避免因为 B 有订单误判上面的越权检查）
+        JsonNode ownPage = dataOf(getJson("/api/merchant/order/page?current=1&size=10", otherToken));
+        assertThat(ownPage.get("total").asLong()).isEqualTo(0L);
+
+        // 反向验证：管理员用同一个订单号查，还是能查到（管理员不走归属校验）
+        JsonNode adminView = dataOf(getJson("/api/admin/order/" + firstOrderNo, adminToken));
+        assertThat(adminView.get("merchantName").asText()).isEqualTo("IT Test Merchant");
+    }
+
+    /**
+     * 轮询直到 fp_pay_order.notify_count >= expected 或超时（15 秒）。
+     * 用于测试等异步回调线程把结果落库。
+     */
+    private void pollUntilNotifyCountAtLeast(String orderNo, int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 15_000L;
+        while (System.currentTimeMillis() < deadline) {
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "SELECT notify_count FROM fp_pay_order WHERE order_no = ?")) {
+                ps.setString(1, orderNo);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next() && rs.getInt("notify_count") >= expected) {
+                        return;
+                    }
+                }
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("超时等待 orderNo=" + orderNo + " 的 notify_count 达到 " + expected);
     }
 
     @Test
@@ -664,6 +1165,150 @@ abstract class AbstractFullFlowTest {
             request = request.param(e.getKey(), e.getValue());
         }
         return mockMvc.perform(request).andReturn();
+    }
+
+    /**
+     * 读订单当前落库的 pay_amount
+     */
+    private BigDecimal readPayAmount(String orderNo) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT pay_amount FROM fp_pay_order WHERE order_no = ?")) {
+            ps.setString(1, orderNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getBigDecimal("pay_amount");
+            }
+        }
+    }
+
+    /**
+     * 读商户累计订单数（用来验证幂等：只累加一次）
+     */
+    private long readMerchantTotalCount(Long merchantId) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT total_count FROM fp_merchant WHERE id = ?")) {
+            ps.setLong(1, merchantId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getLong("total_count");
+            }
+        }
+    }
+
+    /**
+     * 读商户累计收款金额
+     */
+    private BigDecimal readMerchantTotalAmount(Long merchantId) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT total_amount FROM fp_merchant WHERE id = ?")) {
+            ps.setLong(1, merchantId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getBigDecimal("total_amount");
+            }
+        }
+    }
+
+    /**
+     * 迁移脚本 4a 的 SQL 片段：关掉同 (merchant, pay_type, pay_amount) 下多余的 UNPAID 老订单，只保留最早的一笔
+     * MySQL / PG 语法不同，由子类各自提供
+     */
+    protected abstract String migrationCloseConflictingUnpaidSql();
+
+    /**
+     * 迁移脚本 4b 的 SQL 片段：把剩下的 UNPAID 老订单塞进占位表
+     * MySQL / PG 语法不同，由子类各自提供
+     */
+    protected abstract String migrationInsertLegacyPendingSql();
+
+    /**
+     * 直接往 fp_pay_order 插一笔老数据（绕开下单接口，专门给"迁移脚本能否消解冲突"这类测试用）
+     */
+    private void insertLegacyOrder(Connection conn, String orderNo, String outTradeNo,
+                                    Long merchantIdVal, Long shopIdVal, BigDecimal amount,
+                                    BigDecimal payAmount, int status, LocalDateTime expireTime,
+                                    LocalDateTime createTime) throws Exception {
+        String sql = "INSERT INTO fp_pay_order (order_no, out_trade_no, merchant_id, shop_id, qrcode_id, " +
+                "pay_type, pay_method, amount, pay_amount, subject, status, notify_status, notify_count, " +
+                "expire_time, order_source, create_time, update_time) " +
+                "VALUES (?, ?, ?, ?, NULL, 'wxpay', 'page', ?, ?, ?, ?, 0, 0, ?, 'native', ?, ?)";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, orderNo);
+            ps.setString(2, outTradeNo);
+            ps.setLong(3, merchantIdVal);
+            ps.setLong(4, shopIdVal);
+            ps.setBigDecimal(5, amount);
+            ps.setBigDecimal(6, payAmount);
+            ps.setString(7, "legacy test");
+            ps.setInt(8, status);
+            ps.setTimestamp(9, Timestamp.valueOf(expireTime));
+            ps.setTimestamp(10, Timestamp.valueOf(createTime));
+            ps.setTimestamp(11, Timestamp.valueOf(createTime));
+            ps.executeUpdate();
+        }
+    }
+
+    /**
+     * 读订单当前状态
+     */
+    private int readOrderStatus(String orderNo) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT status FROM fp_pay_order WHERE order_no = ?")) {
+            ps.setString(1, orderNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getInt("status");
+            }
+        }
+    }
+
+    /**
+     * 数 fp_pending_pay_amount 里指定订单号的行数
+     */
+    private long countPendingPayAmountByOrderNo(String orderNo) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM fp_pending_pay_amount WHERE order_no = ?")) {
+            ps.setString(1, orderNo);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    /**
+     * 数 fp_pending_pay_amount 里指定 pay_amount 的行数（用来验证 release 契约）
+     */
+    private long countPendingPayAmount(BigDecimal payAmount) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM fp_pending_pay_amount WHERE pay_amount = ?")) {
+            ps.setBigDecimal(1, payAmount);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    /**
+     * 数 fp_unmatched_notify 里指定金额的行数（用来验证"钱到了但认不到单"被落表了）
+     */
+    private long countUnmatchedNotifyByAmount(BigDecimal amount) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM fp_unmatched_notify WHERE amount = ?")) {
+            ps.setBigDecimal(1, amount);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getLong(1);
+            }
+        }
     }
 
     private static Map<String, String> parseQuery(String rawQuery) {

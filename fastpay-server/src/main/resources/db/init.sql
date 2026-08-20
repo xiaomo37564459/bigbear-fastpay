@@ -160,6 +160,8 @@ CREATE TABLE `fp_pay_order` (
     `notify_status` TINYINT DEFAULT 0 COMMENT '回调通知状态：0-未通知，1-通知成功，2-通知失败',
     `notify_count` INT DEFAULT 0 COMMENT '回调通知次数（已尝试通知的次数）',
     `last_notify_time` DATETIME DEFAULT NULL COMMENT '最后通知时间',
+    `notify_result` VARCHAR(1000) DEFAULT NULL COMMENT '最近一次回调商户返回的内容（截断到 1000 字符）',
+    `notify_error` VARCHAR(500) DEFAULT NULL COMMENT '最近一次回调失败的错误信息（超时/连不上/格式错等）',
     `pay_time` DATETIME DEFAULT NULL COMMENT '支付时间（用户完成支付的时间）',
     `expire_time` DATETIME DEFAULT NULL COMMENT '过期时间（订单超过此时间未支付将自动关闭）',
     `client_ip` VARCHAR(50) DEFAULT NULL COMMENT '客户端IP地址（发起支付请求的客户端IP）',
@@ -177,6 +179,52 @@ CREATE TABLE `fp_pay_order` (
     KEY `idx_create_time` (`create_time`) COMMENT '创建时间索引',
     KEY `idx_pay_time` (`pay_time`) COMMENT '支付时间索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='支付订单表 - 存储所有支付订单信息';
+
+-- =====================================================
+-- 7. 待支付金额占位表 (fp_pending_pay_amount)
+-- 说明：同一商户 + 同一支付方式下未过期未支付订单的 pay_amount 必须唯一，
+-- 由唯一索引 uk_pending_pay_amount 兜底。下单时占位，订单结束（已支付 / 关闭 / 过期）时释放
+-- =====================================================
+DROP TABLE IF EXISTS `fp_pending_pay_amount`;
+CREATE TABLE `fp_pending_pay_amount` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `merchant_id` BIGINT NOT NULL COMMENT '商户ID',
+    `pay_type` VARCHAR(20) NOT NULL COMMENT '支付类型：wxpay/alipay',
+    `pay_amount` DECIMAL(10,2) NOT NULL COMMENT '实际应付金额（微调后落定的值）',
+    `order_no` VARCHAR(32) NOT NULL COMMENT '关联的平台订单号',
+    `expire_time` DATETIME NOT NULL COMMENT '关联订单的过期时间，兜底清理用',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_pending_pay_amount` (`merchant_id`, `pay_type`, `pay_amount`) COMMENT '同商户+同支付方式下未支付订单 pay_amount 必须唯一',
+    KEY `idx_pending_order_no` (`order_no`),
+    KEY `idx_pending_expire_time` (`expire_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='待支付金额占位表 - 保证同商户同支付方式下未支付订单的 pay_amount 唯一';
+
+-- =====================================================
+-- 8. 未匹配收款通知表 (fp_unmatched_notify)
+-- 说明：收到付款通知但按 (商户 + 支付方式 + pay_amount) 找不到对应待支付订单时落这张表，
+-- 管理后台能查询并人工处理
+-- =====================================================
+DROP TABLE IF EXISTS `fp_unmatched_notify`;
+CREATE TABLE `fp_unmatched_notify` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `amount` DECIMAL(10,2) NOT NULL COMMENT '收到的收款金额',
+    `pay_type` VARCHAR(20) NOT NULL COMMENT '支付类型：wxpay/alipay',
+    `merchant_id` BIGINT DEFAULT NULL COMMENT '商户ID（通过 channelId 反查）',
+    `channel_id` BIGINT DEFAULT NULL COMMENT '商户通道ID',
+    `raw_message` TEXT COMMENT '原始通知内容（title / msg / receiveTime 汇总）',
+    `notify_time` DATETIME DEFAULT NULL COMMENT '监听软件收到通知的时间',
+    `handle_status` TINYINT DEFAULT 0 COMMENT '处理状态：0-待处理 1-已人工处理 2-已忽略',
+    `handle_remark` VARCHAR(500) DEFAULT NULL COMMENT '处理备注',
+    `handled_order_no` VARCHAR(32) DEFAULT NULL COMMENT '人工对应到的平台订单号',
+    `handle_time` DATETIME DEFAULT NULL COMMENT '处理时间',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_unmatched_handle_status` (`handle_status`),
+    KEY `idx_unmatched_merchant_id` (`merchant_id`),
+    KEY `idx_unmatched_create_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='未匹配收款通知 - 钱到了但认不到订单的记录';
 
 -- =====================================================
 -- 初始化数据
@@ -202,6 +250,8 @@ CREATE TABLE `fp_pay_order` (
 -- 4. fp_merchant_channel - 商户通道表，配置商户的支付通道
 -- 5. fp_pay_qrcode   - 收款二维码表，存储商户上传的收款码
 -- 6. fp_pay_order    - 支付订单表，存储所有支付订单记录
+-- 7. fp_pending_pay_amount - 待支付金额占位表，保证同商户同支付方式下未支付订单的 pay_amount 唯一
+-- 8. fp_unmatched_notify   - 未匹配收款通知表，钱到了但认不到订单的记录
 --
 -- 关系说明：
 -- - 一个商户(merchant)可以有多个店铺(shop)
