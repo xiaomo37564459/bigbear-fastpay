@@ -32,7 +32,7 @@
 
     <el-row :gutter="16">
       <!-- 累计数据 -->
-      <el-col :span="12">
+      <el-col :xs="24" :span="12">
         <div class="dev-card">
           <div class="card-header">
             <span class="card-title">
@@ -64,7 +64,7 @@
       </el-col>
 
       <!-- 快捷操作 -->
-      <el-col :span="12">
+      <el-col :xs="24" :span="12">
         <div class="dev-card">
           <div class="card-header">
             <span class="card-title">
@@ -261,6 +261,35 @@ onMounted(() => {
   .action-text {
     font-size: 13px;
     color: #666;
+  }
+}
+
+/* 手机端：两张卡片改成上下排，四个快捷入口一行排开 */
+@media (max-width: 767px) {
+  .el-row .el-col .dev-card .card-body {
+    /* 上下排之后不再需要左右等高对齐 */
+    display: block;
+  }
+
+  .quick-actions {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+
+  .action-item {
+    padding: 14px 6px;
+
+    .action-icon {
+      width: 38px;
+      height: 38px;
+      font-size: 19px;
+      margin-bottom: 6px;
+    }
+
+    .action-text {
+      font-size: 12px;
+      white-space: nowrap;
+    }
   }
 }
 </style>

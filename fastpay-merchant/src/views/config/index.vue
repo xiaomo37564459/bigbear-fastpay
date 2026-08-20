@@ -8,7 +8,7 @@
 
     <el-row :gutter="16">
       <!-- 商户信息 -->
-      <el-col :span="12">
+      <el-col :xs="24" :span="12">
         <div class="dev-card">
           <div class="card-header">
             <span class="card-title">
@@ -43,7 +43,7 @@
       </el-col>
 
       <!-- API 密钥 -->
-      <el-col :span="12">
+      <el-col :xs="24" :span="12">
         <div class="dev-card">
           <div class="card-header">
             <span class="card-title">
@@ -360,6 +360,38 @@ onMounted(() => {
     font-size: 13px;
     line-height: 1.6;
     overflow-x: auto;
+  }
+}
+
+/* 手机端 */
+@media (max-width: 767px) {
+  /* 四步签名说明改成上下排，横着排每步只剩一个字的宽度 */
+  .sign-steps {
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  /* 回调配置表单：标签挪到输入框上面，不然 120px 的标签把输入框挤没了 */
+  :deep(.el-form) {
+    .el-form-item {
+      display: block;
+    }
+
+    .el-form-item__label {
+      width: auto !important;
+      justify-content: flex-start;
+      padding: 0 0 6px;
+      line-height: 1.5;
+    }
+
+    .el-form-item__content {
+      margin-left: 0 !important;
+    }
+  }
+
+  .code-example .code-block {
+    font-size: 12px;
   }
 }
 </style>

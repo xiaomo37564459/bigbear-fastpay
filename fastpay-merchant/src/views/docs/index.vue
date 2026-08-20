@@ -7,8 +7,8 @@
     </div>
 
     <el-row :gutter="16">
-      <!-- 左侧导航 -->
-      <el-col :span="5">
+      <!-- 左侧导航（手机上收起来：8 条目录横在正文前面，每次都要滑半天才看到内容） -->
+      <el-col :xs="0" :span="5">
         <div class="dev-card doc-nav">
           <div class="card-body">
             <el-menu :default-active="activeSection" @select="scrollToSection">
@@ -50,7 +50,7 @@
       </el-col>
 
       <!-- 右侧内容 -->
-      <el-col :span="19">
+      <el-col :xs="24" :span="19">
         <!-- 快速开始 -->
         <div id="quick-start" class="dev-card doc-section">
           <div class="card-header">
@@ -1064,7 +1064,8 @@ print(response.json())`
 
 .doc-nav {
   position: sticky;
-  top: 88px;
+  /* 跟着顶栏高度走：顶栏在手机上会变矮，写死 88px 会留一条空档 */
+  top: calc(var(--mc-header-h, 64px) + 24px);
 
   :deep(.el-menu) {
     border: none;
