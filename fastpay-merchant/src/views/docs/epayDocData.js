@@ -19,6 +19,14 @@
  */
 export const EPAY_BASE_URL = 'https://pay.copliot.cloud/fastpay-server'
 
+/**
+ * 收款页所在的商户前端地址 —— 和上面的接口地址不是一个前缀，别写混。
+ * 后端拼法是 page-domain + "/pay/" + 订单号（PayOrderServiceImpl.createEpayOrder），
+ * 线上 page-domain 配的就是这个值（application-prod.yml 的 page-domain）。
+ * 接口服务器 /fastpay-server 底下没有 /pay/ 这个路径，写成那样商户是打不开的。
+ */
+export const EPAY_MERCHANT_URL = 'https://pay.copliot.cloud/fastpay-merchant'
+
 /** 开头那段人话说明：这一套是给谁用的 */
 export const epayIntro = {
   who: '你要接的系统（sub2api、发卡站、各类商城）本身支持「易支付」的话，就用这一套 —— 对方系统一行代码都不用改，在它后台填三个配置就能收款。',
@@ -152,14 +160,30 @@ export const epaySignDiff = [
   }
 ]
 
-/** mapi.php 的返回示例 */
+/**
+ * mapi.php 的返回示例
+ * 注意 payurl 走的是商户前端地址（EPAY_MERCHANT_URL），不是接口地址
+ */
 export const epayMapiResponse = `{
   "code": 1,
   "msg": "success",
   "trade_no": "FP20260819120000123456",
-  "payurl": "https://pay.copliot.cloud/fastpay-server/pay/FP20260819120000123456",
+  "payurl": "${EPAY_MERCHANT_URL}/pay/FP20260819120000123456",
   "qrcode": "weixin://wxpay/bizpayurl?pr=xxxxxxxx"
 }`
+
+/**
+ * 回调重发的规则。对照后端 PayOrderServiceImpl.processFailedNotify：
+ * notifyCount 从 0 起、每发一次 +1，循环条件 notifyCount < 5，
+ * 等待时间是 2^notifyCount 分钟。首次发完 count=1 → 等 2 分钟发第 2 次，
+ * 之后 4、8、16 分钟各一次，发满 5 次就停。
+ * 所以是「一共最多 5 次」而不是「重试 5 次」，重发间隔里也没有 1 分钟这一档。
+ */
+export const epayNotifyRetry = {
+  maxTotalSends: 5,
+  retryIntervals: [2, 4, 8, 16],
+  text: '平台一共最多发 5 次（第一次 + 4 次重发），重发间隔依次是 2、4、8、16 分钟。5 次都没收到 success 就不再自动发了，需要商户在后台点「重发通知」。'
+}
 
 /** 回调通知的参数 */
 export const epayNotifyParams = [
@@ -194,7 +218,7 @@ export const epayFaq = [
   },
   {
     q: '订单付成功了，但我的系统没收到通知？',
-    a: '先确认下单时传的 notify_url 是外网能访问的地址（localhost、内网 IP 平台访问不到）。平台发的是 GET 请求不是 POST，别用只收 POST 的路由去接。收到之后必须原样返回字符串 success，返回别的内容平台会当成失败并重试，最多重试 5 次。同一笔可能收到多次，你那边要做到重复收到也不会重复发货。'
+    a: '先确认下单时传的 notify_url 是外网能访问的地址（localhost、内网 IP 平台访问不到）。平台发的是 GET 请求不是 POST，别用只收 POST 的路由去接。收到之后必须原样返回字符串 success，返回别的内容平台会当成失败再发一次 —— 一共最多发 5 次（第一次 + 4 次重发），重发间隔依次是 2、4、8、16 分钟，之后就要商户在后台手动点「重发通知」。同一笔可能收到多次，你那边要做到重复收到也不会重复发货。'
   },
   {
     q: '支持退款吗？',

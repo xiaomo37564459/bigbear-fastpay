@@ -269,8 +269,7 @@
             <el-alert type="warning" :closable="false" style="margin-top: 16px;">
               <template #title>
                 <strong>收到之后必须原样返回字符串 <code>success</code></strong>，
-                多一个字、少一个字母都不算数。平台收不到 <code>success</code> 会重试，
-                最多 5 次，间隔 1 / 2 / 4 / 8 / 16 分钟。
+                多一个字、少一个字母都不算数。收不到 <code>success</code> 平台会再发一次：{{ epayNotifyRetry.text }}
                 也就是说<strong>同一笔可能收到好几次</strong>，你那边要先查自己库里的状态，
                 已经处理过的直接回 <code>success</code>，别重复发货。
               </template>
@@ -619,6 +618,7 @@ import {
   epayNotifySignExample,
   epaySignDiff,
   epayMapiResponse,
+  epayNotifyRetry,
   epayNotifyParams,
   epayFaq,
   epayPhpCode,

@@ -5,6 +5,9 @@ import { createHash } from 'node:crypto'
 import DocsPage from '@/views/docs/index.vue'
 import {
   EPAY_BASE_URL,
+  EPAY_MERCHANT_URL,
+  epayMapiResponse,
+  epayNotifyRetry,
   epayEndpoints,
   epayConfigFields,
   epayRequestParams,
@@ -158,6 +161,44 @@ describe('易支付章节的数据：必须和后端实现对得上', () => {
     expect(all).toMatch(/大写/)
     expect(all).toMatch(/小写/)
     expect(all).toMatch(/&key=/)
+  })
+
+  it('下单返回示例里的收款页地址走商户前端，不是接口服务器', () => {
+    // 后端是 payPageUrl = page-domain + "/pay/" + 订单号，
+    // 线上 page-domain 就是 .../fastpay-merchant（application-prod.yml）。
+    // 接口服务器 /fastpay-server 底下根本没有 /pay/ 这个路径，
+    // 写错了商户会以为是自己接口地址填错，正好踩中这一页最想避免的误会
+    expect(epayMapiResponse).toContain('/fastpay-merchant/pay/')
+    expect(epayMapiResponse).not.toContain('/fastpay-server/pay/')
+
+    const payurl = JSON.parse(epayMapiResponse).payurl
+    expect(payurl.startsWith(`${EPAY_MERCHANT_URL}/pay/`)).toBe(true)
+    // 接口根地址和收款页地址是两个不同的前缀，别再写混
+    expect(EPAY_MERCHANT_URL).not.toBe(EPAY_BASE_URL)
+  })
+
+  it('mapi.php 返回示例是一段合法 JSON，商户能直接拿去比对', () => {
+    const parsed = JSON.parse(epayMapiResponse)
+    expect(parsed.code).toBe(1)          // 易支付协议里 1 才是成功
+    expect(parsed.msg).toBe('success')
+    expect(parsed.trade_no).toBeTruthy()
+    expect(parsed.qrcode).toBeTruthy()
+  })
+
+  it('回调重试的说法和后端对得上：一共最多发 5 次，重发间隔 2/4/8/16 分钟', () => {
+    // 后端 processFailedNotify：notifyCount 从 0 起、每发一次 +1，
+    // 循环条件 notifyCount < 5，等待 2^notifyCount 分钟。
+    // 首次发送后 count=1 → 等 2 分钟发第 2 次 …… 等 16 分钟发第 5 次，然后停。
+    // 所以是「一共 5 次 = 首次 + 4 次重发」，重发间隔没有 1 分钟这一档
+    const all = epayFaq.map((f) => `${f.q}${f.a}`).join('') + epayNotifyRetry.text
+
+    expect(epayNotifyRetry.maxTotalSends).toBe(5)
+    expect(epayNotifyRetry.retryIntervals).toEqual([2, 4, 8, 16])
+    // 别再写成「重试 5 次」——那是 6 次发送，多算了一次
+    expect(all).not.toMatch(/最多重试\s*5\s*次/)
+    expect(all).not.toContain('1 / 2 / 4 / 8 / 16')
+    // 商户真正要记住的那句还得在
+    expect(all).toMatch(/重复发货|重复收到/)
   })
 
   it('回调参数齐全，trade_status 的固定值写出来了', () => {
