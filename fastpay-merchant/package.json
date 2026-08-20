@@ -29,6 +29,7 @@
     "@vue/test-utils": "^2.4.11",
     "jsdom": "^25.0.1",
     "less": "^4.9.0",
+    "postcss": "^8.5.26",
     "sass": "^1.69.5",
     "unplugin-auto-import": "^0.17.3",
     "unplugin-vue-components": "^0.26.0",

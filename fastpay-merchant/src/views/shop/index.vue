@@ -1253,6 +1253,123 @@ onMounted(() => {
   color: #606266;
 }
 
+/* ============================================================
+   手机端排版（MTM-216）
+
+   这一整段只在 ≤767px 生效，电脑端（≥1024px）一条都不会命中，
+   所以电脑上的样子原封不动。
+
+   原来店铺卡片是「名字 | 两个数 | 两个按钮」横着挤在一行，
+   390px 的手机上三块抢宽度，结果是：
+     - 「二维码」被压到 12px 宽，一个字一行竖着排
+     - 「启用」被劈成两行
+     - 第二张卡片被外层 240px 的高度拦腰截断
+   改成上下排：名字一行、编号一行、两个数并排一行、按钮一行。
+   ============================================================ */
+@media (max-width: 767px) {
+  /* 240px 只够放一张半卡片，第二张正好被切在中间，看着像坏了。
+     放宽到能完整放下两张（默认每页就加载 2 条），超过两条才出现滚动条 ——
+     这个滚动条是「往下拉加载更多」用的，不能整个去掉。 */
+  .shop-list-wrapper {
+    max-height: min(60vh, 440px);
+    padding-right: 2px;
+  }
+
+  .shop-list {
+    gap: 10px;
+  }
+
+  .shop-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .shop-info {
+    flex: none;
+  }
+
+  .shop-info .shop-name {
+    font-size: 16px;
+    margin-bottom: 6px;
+    word-break: break-all;
+  }
+
+  .shop-info .shop-meta {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  /* 两个数并排，各占一半 */
+  .shop-stats {
+    gap: 10px;
+    margin-right: 0;
+  }
+
+  /*
+    这里必须写死 padding：全局样式里也有一个叫 .stat-item 的类（控制台的统计卡片），
+    它带着 14px 16px 的内边距漏进来，把这两个小格子挤得只剩十几像素宽 ——
+    「二维码」竖排三行就是这么来的。
+  */
+  .shop-stats .stat-item {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.72);
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
+  .shop-stats .stat-item .stat-value {
+    font-size: 18px;
+    line-height: 1.25;
+    /* 金额特别大的时候宁可折行，也不许把卡片撑破 */
+    overflow-wrap: anywhere;
+  }
+
+  .shop-stats .stat-item .stat-label {
+    font-size: 12px;
+    margin-bottom: 0;
+    /* 「二维码」「累计交易」再窄也得横着排 */
+    white-space: nowrap;
+  }
+
+  .shop-actions {
+    justify-content: flex-end;
+    gap: 12px;
+  }
+
+  /* 「启用 / 禁用」是个小圆标签，被拆成两行就不成形了 */
+  .status-tag {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* 订单筛选：四个输入框写死了宽度，手机上排得七零八落，改成一行两个 */
+  .order-filter {
+    gap: 8px;
+  }
+
+  .order-filter > * {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+  }
+
+  .order-filter :deep(.el-input),
+  .order-filter :deep(.el-select) {
+    width: 100% !important;
+  }
+
+  /* Element 会给挨着的两个按钮自动加左边距，加上 gap 就正好放不下两个，
+     「搜索」「重置」各占一整行很难看，这里去掉它，让两个按钮并排 */
+  .order-filter :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
+}
 </style>
 
 <!-- 全局样式用于预览弹窗 -->
