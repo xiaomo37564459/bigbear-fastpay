@@ -28,6 +28,9 @@ public class MerchantOrderController {
 
     /**
      * 分页查询订单列表
+     * <p>
+     * 【MTM-183 演示用改动】这里故意跟主干上的 MTM-180 改的是同一段代码，
+     * 用来演示自动检查能不能识别出「跟主干冲突了」。
      */
     @Operation(summary = "分页查询订单", description = "分页查询商户订单列表")
     @GetMapping("/page")
@@ -35,6 +38,7 @@ public class MerchantOrderController {
             @RequestParam(defaultValue = "1") Integer current,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) Long shopId,
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer status,
             HttpServletRequest request) {
         Long merchantId = (Long) request.getAttribute("userId");
