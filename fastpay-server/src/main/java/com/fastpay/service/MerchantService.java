@@ -13,7 +13,7 @@ import java.util.List;
 /**
  * 商户服务接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public interface MerchantService extends IService<Merchant> {
 

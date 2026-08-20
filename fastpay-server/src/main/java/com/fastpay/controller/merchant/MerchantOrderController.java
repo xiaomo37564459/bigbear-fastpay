@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 /**
  * 商户平台 - 订单管理控制器
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "商户平台-订单管理", description = "商户订单查询、确认、关闭等操作")
 @RestController
@@ -28,6 +28,9 @@ public class MerchantOrderController {
 
     /**
      * 分页查询订单列表
+     * <p>
+     * 商户前端筛选框传的 orderNo / outTradeNo / subject / payType 必须在这里显式接住，
+     * 否则 Spring 会静默丢弃：这就是 MTM-180「搜不到也返回全部订单」的根因。
      */
     @Operation(summary = "分页查询订单", description = "分页查询商户订单列表")
     @GetMapping("/page")
@@ -35,10 +38,16 @@ public class MerchantOrderController {
             @RequestParam(defaultValue = "1") Integer current,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) Long shopId,
+            @RequestParam(required = false) String orderNo,
+            @RequestParam(required = false) String outTradeNo,
+            @RequestParam(required = false) String subject,
+            @RequestParam(required = false) String payType,
             @RequestParam(required = false) Integer status,
             HttpServletRequest request) {
         Long merchantId = (Long) request.getAttribute("userId");
-        Page<PayOrder> page = payOrderService.pageMerchantOrders(new Page<>(current, size), merchantId, shopId, status);
+        Page<PayOrder> page = payOrderService.pageMerchantOrders(
+                new Page<>(current, size), merchantId, shopId,
+                orderNo, outTradeNo, subject, payType, status);
         PageResult<PayOrder> result = new PageResult<>(page.getRecords(), page.getTotal(), page.getSize(), page.getCurrent());
         return Result.success(result);
     }

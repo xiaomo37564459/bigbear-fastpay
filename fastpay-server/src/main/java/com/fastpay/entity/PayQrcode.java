@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * 收款二维码实体类
  * 存储商户上传的个人收款二维码信息
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 @TableName("fp_pay_qrcode")

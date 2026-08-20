@@ -16,7 +16,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * 认证拦截器
  * 验证请求的 JWT Token
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Component

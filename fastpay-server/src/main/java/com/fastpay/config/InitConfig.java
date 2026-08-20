@@ -15,7 +15,7 @@ import java.sql.SQLException;
  * 系统初始化配置
  * 在应用启动时执行初始化操作
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Slf4j
 @Component

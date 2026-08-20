@@ -10,7 +10,7 @@ import com.fastpay.vo.PayResultVO;
 /**
  * 支付订单服务接口
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 public interface PayOrderService extends IService<PayOrder> {
 
@@ -96,14 +96,24 @@ public interface PayOrderService extends IService<PayOrder> {
 
     /**
      * 分页查询商户订单列表
+     * <p>
+     * 商户端的搜索框把「平台订单号」「商户订单号」「商品名称」拆成三个独立字段，
+     * 服务端必须按同名参数各自过滤（模糊匹配），不能像旧签名那样把它们全部丢掉。
+     * 支付类型是精确匹配。状态、店铺 ID 保持精确匹配。
      *
-     * @param page       分页参数
-     * @param merchantId 商户ID
-     * @param shopId     店铺ID
-     * @param status     状态
+     * @param page        分页参数
+     * @param merchantId  商户ID
+     * @param shopId      店铺ID
+     * @param orderNo     平台订单号（模糊）
+     * @param outTradeNo  商户订单号（模糊）
+     * @param subject     商品名称（模糊）
+     * @param payType     支付类型（精确，wxpay / alipay 等）
+     * @param status      订单状态
      * @return 分页结果
      */
-    Page<PayOrder> pageMerchantOrders(Page<PayOrder> page, Long merchantId, Long shopId, Integer status);
+    Page<PayOrder> pageMerchantOrders(Page<PayOrder> page, Long merchantId, Long shopId,
+                                      String orderNo, String outTradeNo, String subject,
+                                      String payType, Integer status);
 
     /**
      * 获取支付页面数据

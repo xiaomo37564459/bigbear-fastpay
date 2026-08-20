@@ -17,7 +17,7 @@ import java.util.List;
 /**
  * 商户平台 - 收款二维码管理控制器
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "商户平台-二维码管理", description = "商户收款二维码管理操作")
 @RestController

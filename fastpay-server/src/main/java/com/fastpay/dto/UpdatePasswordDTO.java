@@ -6,7 +6,7 @@ import lombok.Data;
 /**
  * 修改密码请求 DTO
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class UpdatePasswordDTO {

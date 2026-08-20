@@ -10,14 +10,16 @@ spring:
     suffix: .html
 
 # FAST 易支付配置
+# 下面这些值都是占位符，实际值请到「商户平台 → 开发配置」里取，
+# 然后通过环境变量注入（推荐）或直接改这个文件（仅限本地开发调试）。
 fastpay:
   # 商户编号（在商户平台获取）
-  merchant-no: M744163504226
+  merchant-no: ${FASTPAY_DEMO_MERCHANT_NO:your-merchant-no-here}
   # API 密钥（在商户平台获取）
-  api-secret: 7c8cf40b280c4f33883bf21ea457d6d1
+  api-secret: ${FASTPAY_DEMO_API_SECRET:your-api-secret-here}
   # 支付网关地址
-  gateway-url: http://121.4.28.146/fastpay-server
+  gateway-url: ${FASTPAY_DEMO_GATEWAY_URL:http://localhost:7001/fastpay-server}
   # 异步通知地址（需要外网可访问）
-  notify-url: http://121.4.28.146:7002/pay/notify
+  notify-url: ${FASTPAY_DEMO_NOTIFY_URL:http://localhost:7002/pay/notify}
   # 同步跳转地址
-  return-url: http://121.4.28.146:7002/pay/return
+  return-url: ${FASTPAY_DEMO_RETURN_URL:http://localhost:7002/pay/return}

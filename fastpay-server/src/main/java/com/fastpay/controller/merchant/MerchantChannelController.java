@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * 商户平台 - 通道管理控制器
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Tag(name = "商户平台-通道管理", description = "商户通道配置管理")
 @RestController

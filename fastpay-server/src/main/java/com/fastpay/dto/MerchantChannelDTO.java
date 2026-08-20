@@ -6,7 +6,7 @@ import lombok.Data;
 /**
  * 商户通道 DTO
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class MerchantChannelDTO {

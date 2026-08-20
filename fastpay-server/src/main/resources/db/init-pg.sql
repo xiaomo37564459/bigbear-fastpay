@@ -22,7 +22,7 @@ DROP TABLE IF EXISTS fp_admin;
 CREATE TABLE fp_admin (
     id BIGSERIAL PRIMARY KEY,
     username VARCHAR(100) NOT NULL,
-    password VARCHAR(64) NOT NULL,
+    password VARCHAR(255) NOT NULL,
     nickname VARCHAR(50) DEFAULT NULL,
     avatar VARCHAR(255) DEFAULT NULL,
     status SMALLINT DEFAULT 1,
@@ -39,7 +39,7 @@ CREATE TABLE fp_admin (
 COMMENT ON TABLE fp_admin IS '管理员表 - 存储系统管理员账号信息';
 COMMENT ON COLUMN fp_admin.id IS '主键ID';
 COMMENT ON COLUMN fp_admin.username IS '用户名（登录账号，支持普通字符串或邮箱格式）';
-COMMENT ON COLUMN fp_admin.password IS '密码（MD5加密存储）';
+COMMENT ON COLUMN fp_admin.password IS '密码（bcrypt 加密存储；兼容历史 MD5，登录成功后自动升级为 bcrypt）';
 COMMENT ON COLUMN fp_admin.nickname IS '昵称（显示名称）';
 COMMENT ON COLUMN fp_admin.avatar IS '头像URL地址';
 COMMENT ON COLUMN fp_admin.status IS '状态：0-禁用，1-启用';
@@ -60,7 +60,7 @@ CREATE TABLE fp_merchant (
     merchant_no VARCHAR(32) NOT NULL,
     merchant_name VARCHAR(100) NOT NULL,
     username VARCHAR(50) NOT NULL,
-    password VARCHAR(64) NOT NULL,
+    password VARCHAR(255) NOT NULL,
     contact_name VARCHAR(50) DEFAULT NULL,
     contact_phone VARCHAR(20) DEFAULT NULL,
     contact_email VARCHAR(100) DEFAULT NULL,
@@ -86,7 +86,7 @@ COMMENT ON COLUMN fp_merchant.id IS '主键ID';
 COMMENT ON COLUMN fp_merchant.merchant_no IS '商户编号（唯一标识，用于API调用）';
 COMMENT ON COLUMN fp_merchant.merchant_name IS '商户名称';
 COMMENT ON COLUMN fp_merchant.username IS '登录用户名';
-COMMENT ON COLUMN fp_merchant.password IS '登录密码（MD5加密存储）';
+COMMENT ON COLUMN fp_merchant.password IS '登录密码（bcrypt 加密存储；兼容历史 MD5，登录成功后自动升级为 bcrypt）';
 COMMENT ON COLUMN fp_merchant.contact_name IS '联系人姓名';
 COMMENT ON COLUMN fp_merchant.contact_phone IS '联系电话';
 COMMENT ON COLUMN fp_merchant.contact_email IS '联系邮箱';

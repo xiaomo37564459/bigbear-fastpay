@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatDateTime,
+  splitDateTime,
   formatAmount,
   formatPayType,
   formatPayMethod,
@@ -23,7 +24,7 @@ const fullOrder = {
   orderNo: 'FP20260819103000123456789012',
   outTradeNo: 'SHOP-ORDER-20260819-000000000001',
   merchantId: 7,
-  merchantName: '大熊测试商户',
+  merchantName: '示例测试商户',
   shopId: 12,
   shopName: '总部旗舰店',
   qrcodeId: 33,
@@ -54,6 +55,13 @@ describe('订单详情 - 取值与格式化', () => {
     expect(formatDateTime('2026-08-19T10:30:00')).toBe('2026-08-19 10:30:00')
     expect(formatDateTime('2026-08-19 10:30:00')).toBe('2026-08-19 10:30:00')
     expect(formatDateTime('2026-08-19T10:30:00.123+08:00')).toBe('2026-08-19 10:30:00')
+  })
+
+  it('时间能拆成日期和时刻两段，列表里分两行显示，秒不会丢', () => {
+    expect(splitDateTime('2026-08-19T09:30:38')).toEqual({ date: '2026-08-19', time: '09:30:38' })
+    expect(splitDateTime('2026-08-19 09:30:38')).toEqual({ date: '2026-08-19', time: '09:30:38' })
+    expect(splitDateTime(null)).toEqual({ date: '', time: '' })
+    expect(splitDateTime('')).toEqual({ date: '', time: '' })
   })
 
   it('金额为空时显示占位符而不是 ¥-，0 元要正常显示', () => {
@@ -99,11 +107,11 @@ describe('订单详情 - 取值与格式化', () => {
 
 describe('订单详情 - 列表行和详情接口的数据合并', () => {
   it('详情接口没返回的字段（商户名、店铺名）保留列表行里的值', () => {
-    const row = { orderNo: 'FP1', merchantName: '大熊测试商户', shopName: '总部旗舰店', status: 0 }
+    const row = { orderNo: 'FP1', merchantName: '示例测试商户', shopName: '总部旗舰店', status: 0 }
     const detail = { orderNo: 'FP1', merchantName: null, shopName: '', status: 1, clientIp: '1.2.3.4' }
     expect(mergeOrderDetail(row, detail)).toEqual({
       orderNo: 'FP1',
-      merchantName: '大熊测试商户',
+      merchantName: '示例测试商户',
       shopName: '总部旗舰店',
       status: 1,
       clientIp: '1.2.3.4'

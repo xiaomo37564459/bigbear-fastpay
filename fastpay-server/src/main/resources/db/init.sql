@@ -17,7 +17,7 @@ DROP TABLE IF EXISTS `fp_admin`;
 CREATE TABLE `fp_admin` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `username` VARCHAR(100) NOT NULL COMMENT '用户名（登录账号，支持普通字符串或邮箱格式）',
-    `password` VARCHAR(64) NOT NULL COMMENT '密码（MD5加密存储）',
+    `password` VARCHAR(255) NOT NULL COMMENT '密码（bcrypt 加密存储；兼容历史 MD5，登录成功后自动升级为 bcrypt）',
     `nickname` VARCHAR(50) DEFAULT NULL COMMENT '昵称（显示名称）',
     `avatar` VARCHAR(255) DEFAULT NULL COMMENT '头像URL地址',
     `status` TINYINT DEFAULT 1 COMMENT '状态：0-禁用，1-启用',
@@ -41,7 +41,7 @@ CREATE TABLE `fp_merchant` (
     `merchant_no` VARCHAR(32) NOT NULL COMMENT '商户编号（唯一标识，用于API调用）',
     `merchant_name` VARCHAR(100) NOT NULL COMMENT '商户名称',
     `username` VARCHAR(50) NOT NULL COMMENT '登录用户名',
-    `password` VARCHAR(64) NOT NULL COMMENT '登录密码（MD5加密存储）',
+    `password` VARCHAR(255) NOT NULL COMMENT '登录密码（bcrypt 加密存储；兼容历史 MD5，登录成功后自动升级为 bcrypt）',
     `contact_name` VARCHAR(50) DEFAULT NULL COMMENT '联系人姓名',
     `contact_phone` VARCHAR(20) DEFAULT NULL COMMENT '联系电话',
     `contact_email` VARCHAR(100) DEFAULT NULL COMMENT '联系邮箱',

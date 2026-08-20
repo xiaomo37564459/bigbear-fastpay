@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Knife4j API 文档配置
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Configuration
 public class Knife4jConfig {

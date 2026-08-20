@@ -657,7 +657,7 @@ const wsMessageTypes = [
 
 // WebSocket JavaScript 示例
 const wsJsExample = `const outTradeNo = 'ORDER123456';
-const merchantNo = 'M230117997677';
+const merchantNo = 'M12345678';
 
 const wsUrl = 'ws://your-domain/fastpay-server/ws/pay/' + merchantNo + outTradeNo;
 

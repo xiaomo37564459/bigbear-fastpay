@@ -11,7 +11,7 @@ import java.math.BigDecimal;
  * 创建支付订单 DTO
  * 用于商户调用支付接口时的参数
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Data
 public class CreateOrderDTO {

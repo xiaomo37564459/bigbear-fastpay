@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 /**
  * MyBatis Plus 配置类
  *
- * @author FastPay
+ * @author xiaomo37564459
  */
 @Configuration
 public class MybatisPlusConfig implements MetaObjectHandler {
