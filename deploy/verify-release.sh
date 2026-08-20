@@ -15,7 +15,8 @@
 # 退出码：全绿 = 0；有任何一项 FAIL = 1。可以直接串在部署命令后面。
 #
 # ⚠️ 这个脚本只读，不改任何东西：不写数据库、不改配置、不重启服务。
-# ⚠️ 它读 /etc/fastpay/fastpay-server.env 拿数据库地址，但绝不会把里面的值打印出来。
+# ⚠️ 它读 /etc/fastpay/fastpay-server.env 拿数据库地址，但绝不会把里面的值打印出来；
+#    日志片段这类把外部内容原样透出来的地方，也会先把连接串和 IP 换成占位符再打印（见 mask）。
 #
 # 这个脚本验不了什么，别误以为它全包了：
 #   它只能确认「发上去的是对的版本、系统活着、结构对得上」，
@@ -50,6 +51,17 @@ ok()   { PASS_N=$((PASS_N+1)); printf '%s  ✅ PASS%s  %s\n' "$C_OK" "$C_OFF" "$
 no()   { FAIL_N=$((FAIL_N+1)); printf '%s  ❌ FAIL%s  %s\n' "$C_NO" "$C_OFF" "$1"; }
 warn() { WARN_N=$((WARN_N+1)); printf '%s  ⚠️  注意%s  %s\n' "$C_WARN" "$C_OFF" "$1"; }
 head_() { printf '\n%s%s%s\n' "$C_B" "$1" "$C_OFF"; }
+
+# 这份输出是要被贴回 issue 给人看的，所以凡是把外部内容原样透出来的地方（目前是日志片段）
+# 都先过一遍这个：把数据库连接串和 IP 换成占位符。日志里的报错经常整段带着
+# jdbc:postgresql://主机:端口/库名，不挡一下就等于把内网地址贴出去了
+# —— docs/SECRETS.md 明令内网地址一个字都不许进这个工作区。
+# 连接串一路吃到空白或引号为止，不在逗号处收手：多主机写法
+# （jdbc:postgresql://主机A:5432,主机B:5432/库）遇到逗号停下会把后半个主机漏出去。
+mask() {
+  sed -E -e 's#(jdbc:[a-z]+://)[^[:space:]"]*#\1<地址已隐去>#g' \
+         -e 's#([0-9]{1,3}\.){3}[0-9]{1,3}#<IP已隐去>#g'
+}
 
 printf '\n===== FastPay 发版验证 =====\n'
 printf '服务器：%s\n' "$(hostname)"
@@ -165,19 +177,26 @@ else
 
   if [ "$DB_OUT" = "PARSE_FAIL" ]; then
     no "$ENV_FILE 里的 DB_URL 格式不对，应形如 jdbc:postgresql://主机:端口/库名"
-  elif echo "$DB_OUT" | grep -qiE 'error|failed|could not'; then
+  # 'command not found' 也要算进来：这台机器上没装 psql 客户端时报的就是这句，
+  # 不认它的话会掉进下面的 else，打出一句「数据库连得上」—— 根本没连过，却报通过。
+  elif echo "$DB_OUT" | grep -qiE 'error|failed|could not|command not found'; then
     # 故意不打印 psql 的原始报错：它里面带着数据库地址和账号名
     # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
     # 而这份输出经常被贴回 issue 给人看，docs/SECRETS.md 明令内网地址一个字都不许进去。
     # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次 psql。
-    case "$DB_OUT" in
-      *"password authentication failed"*)  DB_HINT='账号或口令不对' ;;
-      *"does not exist"*)                  DB_HINT='库名或账号不存在' ;;
-      *"Connection refused"*|*"could not connect"*|*"could not translate"*|*"timeout expired"*|*"no route to host"*)
-                                           DB_HINT='连不上（地址、端口、防火墙，或者数据库没起来）' ;;
-      *)                                   DB_HINT='其他错误' ;;
-    esac
-    no "连不上数据库：$DB_HINT。原始报错里带着服务器地址，这里不打印；要看原文就自己 SSH 上去手工跑一次 psql（连接信息在 $ENV_FILE）"
+    if echo "$DB_OUT" | grep -qiE 'command not found'; then
+      # 这台机器缺工具，不是数据库有问题 —— 提示也得给成「去装客户端」，不是「去查数据库」。
+      no "数据库这项没验成：这台机器上没装 psql 客户端，脚本压根没连过数据库（所以「迁移到位没有」这几项这次也没查）。装一个再重跑：apt-get install -y postgresql-client（CentOS 用 yum install -y postgresql）"
+    else
+      if   echo "$DB_OUT" | grep -qiE 'password authentication failed|authentication'; then DB_HINT='账号或口令不对'
+      elif echo "$DB_OUT" | grep -qiE 'does not exist';                                then DB_HINT='库名或账号不存在'
+      elif echo "$DB_OUT" | grep -qiE 'timeout|timed out';                             then DB_HINT='连接超时，多半是网络或防火墙拦着'
+      elif echo "$DB_OUT" | grep -qiE 'refused|could not connect|no route';            then DB_HINT='端口连不上，数据库可能没在跑'
+      elif echo "$DB_OUT" | grep -qiE 'could not translate|name or service not known'; then DB_HINT='数据库主机名解析不了，地址可能写错了'
+      else                                                                                  DB_HINT='原因不明'
+      fi
+      no "连不上数据库（$DB_HINT）。原始报错里带着服务器地址和账号名，这里不打印；要看原文就自己 SSH 上去手工跑一次 psql（连接信息在 $ENV_FILE）"
+    fi
   else
     ok "数据库连得上"
     # V1_1：token_version 列必须在（少了后端根本起不来，这里再确认一次）
@@ -203,8 +222,9 @@ if [ -r "$LOG_FILE" ]; then
   if [ "$ERR_N" -eq 0 ]; then
     ok "最近 500 行日志里没有 ERROR"
   else
-    warn "最近 500 行日志里有 $ERR_N 条 ERROR，看一眼是不是这次带出来的："
-    tail -n 500 "$LOG_FILE" | grep ' ERROR ' | tail -3 | cut -c1-160 | sed 's/^/         /'
+    warn "最近 500 行日志里有 $ERR_N 条 ERROR，看一眼是不是这次带出来的（地址已隐去，完整日志上服务器看）："
+    # 先 mask 再 cut：截断放在后面，免得半截连接串从 160 字的切口漏出去
+    tail -n 500 "$LOG_FILE" | grep ' ERROR ' | tail -3 | mask | cut -c1-160 | sed 's/^/         /'
   fi
 else
   warn "读不到日志文件 $LOG_FILE"
