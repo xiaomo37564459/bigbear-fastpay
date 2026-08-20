@@ -23,9 +23,15 @@ public class PayResultVO {
     private String outTradeNo;
 
     /**
-     * 订单金额
+     * 订单金额（商户下单时报的原始金额）
      */
     private BigDecimal amount;
+
+    /**
+     * 实际应付金额（在原始 amount 基础上做过 ±0.01~0.99 元微调，避免同金额撞单）。
+     * 支付页/前端展示的必须是这个值；对接方需要按这个值付款才能匹配到订单。
+     */
+    private BigDecimal payAmount;
 
     /**
      * 支付类型

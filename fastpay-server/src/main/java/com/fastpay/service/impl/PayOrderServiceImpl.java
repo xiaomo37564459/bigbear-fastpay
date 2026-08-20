@@ -2,6 +2,7 @@ package com.fastpay.service.impl;
 
 import cn.hutool.http.HttpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fastpay.common.BusinessException;
@@ -18,6 +19,7 @@ import com.fastpay.mapper.PayQrcodeMapper;
 import com.fastpay.mapper.ShopMapper;
 import com.fastpay.service.PayOrderService;
 import com.fastpay.service.PayQrcodeService;
+import com.fastpay.service.PendingPayAmountService;
 import com.fastpay.util.EpaySignUtil;
 import com.fastpay.util.SignUtil;
 import com.fastpay.vo.PayResultVO;
@@ -28,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
@@ -48,6 +51,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
     private final ShopMapper shopMapper;
     private final PayQrcodeMapper payQrcodeMapper;
     private final PayQrcodeService payQrcodeService;
+    private final PendingPayAmountService pendingPayAmountService;
     private final Executor payNotifyExecutor;
 
     @Value("${fastpay.pay.order-timeout-minutes}")
@@ -58,11 +62,13 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
 
     public PayOrderServiceImpl(MerchantMapper merchantMapper, ShopMapper shopMapper,
                                PayQrcodeMapper payQrcodeMapper, PayQrcodeService payQrcodeService,
+                               PendingPayAmountService pendingPayAmountService,
                                @Qualifier("payNotifyExecutor") Executor payNotifyExecutor) {
         this.merchantMapper = merchantMapper;
         this.shopMapper = shopMapper;
         this.payQrcodeMapper = payQrcodeMapper;
         this.payQrcodeService = payQrcodeService;
+        this.pendingPayAmountService = pendingPayAmountService;
         this.payNotifyExecutor = payNotifyExecutor;
     }
 
@@ -146,14 +152,28 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         order.setExtParam(dto.getExtParam());
         order.setOrderSource(Constants.OrderSource.NATIVE);
 
-        this.save(order);
-        log.info("创建支付订单成功: orderNo={}, amount={}", order.getOrderNo(), order.getAmount());
+        // 分配唯一 pay_amount（在原始 amount 附近微调），彻底避免"两人同价撞单认错人"
+        BigDecimal payAmount = pendingPayAmountService.allocate(
+                merchant.getId(), qrcode.getPayType(), dto.getAmount(),
+                order.getOrderNo(), order.getExpireTime());
+        order.setPayAmount(payAmount);
+
+        try {
+            this.save(order);
+        } catch (RuntimeException e) {
+            // 订单落库失败要把 pay_amount 占位释放掉，否则会长时间占着一个金额白白挡后来的订单
+            pendingPayAmountService.release(merchant.getId(), qrcode.getPayType(), payAmount, order.getOrderNo());
+            throw e;
+        }
+        log.info("创建支付订单成功: orderNo={}, amount={}, payAmount={}",
+                order.getOrderNo(), order.getAmount(), order.getPayAmount());
 
         // 构建返回结果
         PayResultVO vo = new PayResultVO();
         vo.setOrderNo(order.getOrderNo());
         vo.setOutTradeNo(order.getOutTradeNo());
         vo.setAmount(order.getAmount());
+        vo.setPayAmount(order.getPayAmount());
         vo.setPayType(order.getPayType());
         vo.setPayMethod(order.getPayMethod());
         vo.setExpireTime(order.getExpireTime().atZone(java.time.ZoneId.systemDefault()).toEpochSecond());
@@ -223,13 +243,26 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         order.setClientIp(clientIp);
         order.setOrderSource(Constants.OrderSource.EPAY);
 
-        this.save(order);
-        log.info("创建易支付订单成功: orderNo={}, amount={}, source=epay", order.getOrderNo(), order.getAmount());
+        // 易支付路径同样分配唯一 pay_amount
+        BigDecimal payAmount = pendingPayAmountService.allocate(
+                merchant.getId(), qrcode.getPayType(), dto.getAmount(),
+                order.getOrderNo(), order.getExpireTime());
+        order.setPayAmount(payAmount);
+
+        try {
+            this.save(order);
+        } catch (RuntimeException e) {
+            pendingPayAmountService.release(merchant.getId(), qrcode.getPayType(), payAmount, order.getOrderNo());
+            throw e;
+        }
+        log.info("创建易支付订单成功: orderNo={}, amount={}, payAmount={}, source=epay",
+                order.getOrderNo(), order.getAmount(), order.getPayAmount());
 
         PayResultVO vo = new PayResultVO();
         vo.setOrderNo(order.getOrderNo());
         vo.setOutTradeNo(order.getOutTradeNo());
         vo.setAmount(order.getAmount());
+        vo.setPayAmount(order.getPayAmount());
         vo.setPayType(order.getPayType());
         vo.setPayMethod(order.getPayMethod());
         vo.setExpireTime(order.getExpireTime().atZone(java.time.ZoneId.systemDefault()).toEpochSecond());
@@ -242,6 +275,34 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
     public PayOrder queryOrder(String orderNo) {
         return this.getOne(new LambdaQueryWrapper<PayOrder>()
                 .eq(PayOrder::getOrderNo, orderNo));
+    }
+
+    @Override
+    public PayOrder getOrderDetail(String orderNo, Long merchantId) {
+        PayOrder order = this.queryOrder(orderNo);
+        if (order == null) {
+            return null;
+        }
+        // 归属校验：merchantId != null 表示商户中心侧调用，只能看自己的订单，
+        // 抛的异常和 confirmPay / closeOrder / resendNotify 三处保持一致。
+        // 管理后台传 null，直接放行。
+        if (merchantId != null && !merchantId.equals(order.getMerchantId())) {
+            throw new BusinessException("无权操作此订单");
+        }
+        // 补齐商户名和店铺名，跟列表接口口径保持一致
+        if (order.getMerchantId() != null) {
+            Merchant merchant = merchantMapper.selectById(order.getMerchantId());
+            if (merchant != null) {
+                order.setMerchantName(merchant.getMerchantName());
+            }
+        }
+        if (order.getShopId() != null) {
+            Shop shop = shopMapper.selectById(order.getShopId());
+            if (shop != null) {
+                order.setShopName(shop.getShopName());
+            }
+        }
+        return order;
     }
 
     @Override
@@ -270,41 +331,65 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             throw new BusinessException("无权操作此订单");
         }
 
-        // 状态校验
+        // 已支付幂等直接返回：不再累加统计、不再发回调
+        if (Constants.OrderStatus.PAID.equals(order.getStatus())) {
+            log.info("订单已支付，跳过重复确认: orderNo={}", orderNo);
+            return;
+        }
+        // 其它非 UNPAID（已过期 / 已关闭）视为异常
         if (!Constants.OrderStatus.UNPAID.equals(order.getStatus())) {
             throw new BusinessException("订单状态不正确");
         }
 
-        // 更新订单状态
-        order.setStatus(Constants.OrderStatus.PAID);
-        order.setPayAmount(order.getAmount());
-        final LocalDateTime payTime = LocalDateTime.now();
-        order.setPayTime(payTime);
-        this.updateById(order);
+        // 乐观锁：把 status 从 UNPAID CAS 到 PAID。影响 0 行说明另一路已经把它标成已支付了，直接幂等返回
+        LocalDateTime payTime = LocalDateTime.now();
+        int affected = this.getBaseMapper().update(null, new LambdaUpdateWrapper<PayOrder>()
+                .set(PayOrder::getStatus, Constants.OrderStatus.PAID)
+                .set(PayOrder::getPayTime, payTime)
+                .eq(PayOrder::getOrderNo, orderNo)
+                .eq(PayOrder::getStatus, Constants.OrderStatus.UNPAID));
+        if (affected == 0) {
+            log.info("订单已被并发处理，本次幂等返回: orderNo={}", orderNo);
+            return;
+        }
+
+        // 只有 CAS 赢的这一路才能继续做累加统计、释放占位、发回调
+        // 重新读一次，拿到最新 pay_time 等字段，也顺便刷新回内存对象供后续使用
+        PayOrder confirmed = this.queryOrder(orderNo);
+        if (confirmed == null) {
+            // 极不可能：CAS 刚成功、订单转瞬被物理删除；保守起见跳过后续统计
+            return;
+        }
+
+        BigDecimal statAmount = confirmed.getPayAmount() != null ? confirmed.getPayAmount() : confirmed.getAmount();
 
         // 更新二维码统计
-        PayQrcode qrcode = payQrcodeMapper.selectById(order.getQrcodeId());
+        PayQrcode qrcode = payQrcodeMapper.selectById(confirmed.getQrcodeId());
         if (qrcode != null) {
-            qrcode.setTotalAmount(qrcode.getTotalAmount().add(order.getPayAmount()));
+            qrcode.setTotalAmount(qrcode.getTotalAmount().add(statAmount));
             qrcode.setTotalCount(qrcode.getTotalCount() + 1);
             payQrcodeMapper.updateById(qrcode);
         }
 
         // 更新店铺统计
-        Shop shop = shopMapper.selectById(order.getShopId());
+        Shop shop = shopMapper.selectById(confirmed.getShopId());
         if (shop != null) {
-            shop.setTotalAmount(shop.getTotalAmount().add(order.getPayAmount()));
+            shop.setTotalAmount(shop.getTotalAmount().add(statAmount));
             shop.setTotalCount(shop.getTotalCount() + 1);
             shopMapper.updateById(shop);
         }
 
         // 更新商户统计
-        Merchant merchant = merchantMapper.selectById(order.getMerchantId());
+        Merchant merchant = merchantMapper.selectById(confirmed.getMerchantId());
         if (merchant != null) {
-            merchant.setTotalAmount(merchant.getTotalAmount().add(order.getPayAmount()));
+            merchant.setTotalAmount(merchant.getTotalAmount().add(statAmount));
             merchant.setTotalCount(merchant.getTotalCount() + 1);
             merchantMapper.updateById(merchant);
         }
+
+        // 释放 pay_amount 占位，让后来的订单能复用这个金额
+        pendingPayAmountService.release(confirmed.getMerchantId(), confirmed.getPayType(),
+                confirmed.getPayAmount(), confirmed.getOrderNo());
 
         log.info("订单支付确认成功: orderNo={}", orderNo);
 
@@ -312,7 +397,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         final String finalOrderNo = orderNo;
         payNotifyExecutor.execute(() -> {
             try {
-                doSendNotify(order);
+                doSendNotify(confirmed);
             } catch (Exception e) {
                 log.error("异步发送回调通知异常: orderNo={}", finalOrderNo, e);
             }
@@ -338,6 +423,10 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
 
         order.setStatus(Constants.OrderStatus.CLOSED);
         this.updateById(order);
+
+        // 关单也要释放 pay_amount 占位
+        pendingPayAmountService.release(order.getMerchantId(), order.getPayType(),
+                order.getPayAmount(), order.getOrderNo());
     }
 
     @Override
@@ -423,6 +512,9 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             if (Constants.OrderStatus.UNPAID.equals(order.getStatus())) {
                 order.setStatus(Constants.OrderStatus.EXPIRED);
                 this.updateById(order);
+                // 支付页翻到时才发现的过期，也要释放占位
+                pendingPayAmountService.release(order.getMerchantId(), order.getPayType(),
+                        order.getPayAmount(), order.getOrderNo());
             }
         }
 
@@ -439,8 +531,14 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         for (PayOrder order : expiredOrders) {
             order.setStatus(Constants.OrderStatus.EXPIRED);
             this.updateById(order);
+            // 过期订单释放它占用的 pay_amount
+            pendingPayAmountService.release(order.getMerchantId(), order.getPayType(),
+                    order.getPayAmount(), order.getOrderNo());
             log.info("订单已过期: orderNo={}", order.getOrderNo());
         }
+
+        // 兜底：清理占位表里已过期但因为异常路径没释放的残留（比如进程崩过一次）
+        pendingPayAmountService.cleanExpired(LocalDateTime.now());
     }
 
     @Override
@@ -488,6 +586,9 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             order.setNotifyStatus("success".equalsIgnoreCase(response) ? 1 : 2);
             order.setNotifyCount(order.getNotifyCount() + 1);
             order.setLastNotifyTime(LocalDateTime.now());
+            // 存商户返回内容，截断到 NOTIFY_RESULT_MAX_LEN；成功路径下 notify_error 清空
+            order.setNotifyResult(truncate(response, NOTIFY_RESULT_MAX_LEN));
+            order.setNotifyError(null);
             this.updateById(order);
 
         } catch (Exception e) {
@@ -496,8 +597,44 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
             order.setNotifyStatus(2);
             order.setNotifyCount(order.getNotifyCount() + 1);
             order.setLastNotifyTime(LocalDateTime.now());
+            // 存报错信息（异常类名 + message，截断到 NOTIFY_ERROR_MAX_LEN）；失败路径下 notify_result 清空
+            order.setNotifyResult(null);
+            order.setNotifyError(truncate(formatError(e), NOTIFY_ERROR_MAX_LEN));
             this.updateById(order);
         }
+    }
+
+    /** notify_result 最大存储长度，超出直接截断，跟建表脚本的 VARCHAR(1000) 对齐 */
+    private static final int NOTIFY_RESULT_MAX_LEN = 1000;
+
+    /** notify_error 最大存储长度，超出直接截断，跟建表脚本的 VARCHAR(500) 对齐 */
+    private static final int NOTIFY_ERROR_MAX_LEN = 500;
+
+    /**
+     * 长度超限时按 code point 边界截断，避免把 UTF-16 代理对切成半个字符导致乱码。
+     */
+    private static String truncate(String s, int maxLen) {
+        if (s == null || s.length() <= maxLen) {
+            return s;
+        }
+        // 若截断点正好落在代理对中间，往前退一格
+        int end = maxLen;
+        if (Character.isHighSurrogate(s.charAt(end - 1))) {
+            end--;
+        }
+        return s.substring(0, end);
+    }
+
+    /**
+     * 把异常拍成 "类名: message" 一行，方便直接展示给运营看，不要塞完整栈。
+     */
+    private static String formatError(Throwable e) {
+        String msg = e.getMessage();
+        String name = e.getClass().getSimpleName();
+        if (msg == null || msg.isEmpty()) {
+            return name;
+        }
+        return name + ": " + msg;
     }
 
     /**
@@ -508,6 +645,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         params.put("merchantNo", merchant.getMerchantNo());
         params.put("orderNo", order.getOrderNo());
         params.put("outTradeNo", order.getOutTradeNo());
+        // 语义约定：amount = 商户下单时报的原始金额；payAmount = 我们微调后的实付金额
         params.put("amount", order.getAmount());
         params.put("payAmount", order.getPayAmount());
         params.put("payType", order.getPayType());
@@ -523,7 +661,10 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
     }
 
     /**
-     * 彩虹易支付格式的回调：GET 查询串 + 小写 MD5 签名
+     * 彩虹易支付格式的回调：GET 查询串 + 小写 MD5 签名。
+     * 关键点：money 字段回传"原始订单金额" order.getAmount()，不能回传微调后的 pay_amount。
+     * sub2api 那边记的订单是 10 元，我们回传 10.01 它会认为金额不符而拒绝，
+     * 导致明明付款成功却不给用户充值。
      */
     private String sendEpayNotify(PayOrder order, Merchant merchant) {
         TreeMap<String, String> params = new TreeMap<>();
@@ -532,9 +673,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         params.put("out_trade_no", order.getOutTradeNo());
         params.put("type", order.getPayType());
         params.put("name", order.getSubject() == null ? "" : order.getSubject());
-        params.put("money", order.getPayAmount() != null
-                ? order.getPayAmount().toPlainString()
-                : order.getAmount().toPlainString());
+        params.put("money", order.getAmount().toPlainString());
         params.put("trade_status", "TRADE_SUCCESS");
 
         String sign = EpaySignUtil.generateSign(params, merchant.getApiSecret());
@@ -604,17 +743,17 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
 
         LocalDateTime now = LocalDateTime.now();
         int retryCount = 0;
-        
+
         for (PayOrder order : failedOrders) {
             // 根据通知次数计算重试间隔（递增策略：1分钟、2分钟、4分钟、8分钟、16分钟）
             int intervalMinutes = (int) Math.pow(2, order.getNotifyCount());
             LocalDateTime nextRetryTime = order.getLastNotifyTime().plusMinutes(intervalMinutes);
-            
+
             // 如果还没到重试时间，跳过
             if (now.isBefore(nextRetryTime)) {
                 continue;
             }
-            
+
             try {
                 doSendNotify(order);
                 retryCount++;
@@ -623,7 +762,7 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
                 log.error("重发回调通知失败: orderNo={}, error={}", order.getOrderNo(), e.getMessage());
             }
         }
-        
+
         if (retryCount > 0) {
             log.info("本次处理失败回调通知完成，共重发{}条", retryCount);
         }
