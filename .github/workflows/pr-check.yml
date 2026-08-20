@@ -14,6 +14,15 @@ on:
 permissions:
   contents: read
 
+env:
+  # 整套系统是按东八区设计的（application-dev.yml 里 Jackson 的 time-zone、MySQL 连接串里的
+  # serverTimezone 都写死了 Asia/Shanghai），开发同学的机器也都在东八区。GitHub 的机器默认是 UTC，
+  # 时区对不上，MySQL 那条路径的「订单超时自动关单」测试就会挂。这里把 CI 机器的时区调成跟开发机、
+  # 跟配置一致，保证「本地绿 = CI 绿」。
+  # 注意：这不是绕开测试。测试挂在时区上这件事本身是个隐患（真部署到 UTC 的服务器上会重现），
+  # 已经在 MTM-183 里单独提出来给后端跟进，这里只负责让 CI 环境和开发环境保持一致。
+  TZ: Asia/Shanghai
+
 # 同一个 PR 连着推好几次时，只保留最后一次的检查结果，前面的自动取消，省时间也省得看花眼
 concurrency:
   group: pr-check-${{ github.event.pull_request.number || github.ref }}
@@ -30,7 +39,7 @@ jobs:
     steps:
       # 注意：这里故意取 PR 分支自己的提交（head.sha），而不是 GitHub 默认给的那个已经合好的临时版本，
       # 因为我们要自己动手合一次，才能在合不上的时候明确告诉你「跟主干冲突了」。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
@@ -45,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
@@ -55,7 +64,7 @@ jobs:
           # 用第一步定好的那笔主干提交，保证几项检查跑的是同一个主干版本
           master-sha: ${{ needs.merge-master.outputs.master-sha }}
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -89,7 +98,7 @@ jobs:
       # 测试报告留档：红了可以点进这个附件看具体是哪几项失败、失败原因是什么
       - name: 收走测试报告
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: 后端测试报告-surefire
           path: fastpay-server/target/surefire-reports/
@@ -106,7 +115,7 @@ jobs:
       matrix:
         app: [fastpay-admin, fastpay-merchant]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
@@ -115,7 +124,7 @@ jobs:
           base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
           master-sha: ${{ needs.merge-master.outputs.master-sha }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: npm

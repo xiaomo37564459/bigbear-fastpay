@@ -91,7 +91,22 @@ cd fastpay-merchant && npm ci && npm test && npm run build
 - 检查跑在 GitHub 提供的 Ubuntu 机器上，用 JDK 17（temurin）和 Node 20
 - 两套端到端测试**不需要 Docker、也不需要机器上装数据库**：测试自己会临时拉起一个真的 MariaDB
   （MySQL 协议兼容，靠 MariaDB4j）和一个真的 PostgreSQL（靠 zonky embedded-postgres），跑完自动销毁
+- **机器时区设成了东八区（`TZ: Asia/Shanghai`）**，跟开发同学的机器、跟配置里写死的
+  `Asia/Shanghai` 保持一致，见下面一节
 - 这个检查只读代码、只跑测试，**不碰服务器、不碰任何数据库、不发布任何东西**
+
+### 为什么要专门把 CI 机器的时区调成东八区
+
+GitHub 的机器默认是 UTC（零时区）。不调的话，`MySqlFullFlowTest` 里「订单超时自动关单」那两条
+测试会挂：测试往数据库写过期时间用的是机器的本地时间，而 MySQL 连接串里写死了
+`serverTimezone=Asia/Shanghai`，两边差 8 小时，本该过期的订单就没过期。PostgreSQL 那条路径的连接串
+没有这个参数，所以不受影响 —— 这也是为什么只有 MySQL 那一半会挂。
+
+把 CI 机器调成东八区，是为了让「本地绿 = CI 绿」，**不是绕开测试**。
+
+⚠️ 但这件事本身是个隐患：**真把服务部署到一台 UTC 时区的服务器上，同样的问题会在生产上重现**
+（订单该超时的不超时）。这个已经单独提出来给后端跟进，不在本期 CI 的范围内。上线前请确认服务器
+时区是东八区：`timedatectl` 看一眼，不对就 `sudo timedatectl set-timezone Asia/Shanghai`。
 
 ## 后面还要做什么
 
