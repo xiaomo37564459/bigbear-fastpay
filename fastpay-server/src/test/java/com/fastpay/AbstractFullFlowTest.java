@@ -565,7 +565,7 @@ abstract class AbstractFullFlowTest {
     @Test
     @Order(36)
     void step20_migrationScriptCollapsesLegacyUnpaidConflicts() throws Exception {
-        // 目的：验证 V1_2 迁移脚本的 4a/4b 两步。老库升级时如果有多笔 UNPAID 撞金额，
+        // 目的：验证 V1_4 迁移脚本的 4a/4b 两步。老库升级时如果有多笔 UNPAID 撞金额，
         // 4a 只保留最早创建的那笔、其它关掉；4b 把剩下的塞进占位表，让新版后端一启动
         // 就能自动避开这些金额。没有这一步，升级窗口内新老订单会再撞一次。
         //
