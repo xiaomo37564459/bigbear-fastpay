@@ -234,6 +234,35 @@ export function resendNotify(orderNo) {
   return request.post(`/admin/order/${orderNo}/notify`)
 }
 
+// ==================== 未匹配收款通知 ====================
+
+/**
+ * 分页查询「钱到了但没认到订单」的记录
+ * @param {{ current: number, size: number, handleStatus?: number, merchantId?: number }} params
+ *        handleStatus: 0-待处理 1-已处理 2-已忽略，不传即全部
+ */
+export function getUnmatchedNotifyPage(params) {
+  return request.get('/admin/unmatched-notify/page', { params })
+}
+
+/**
+ * 人工把某条未匹配收款标记为已处理（这笔钱认到了哪张订单上）
+ * @param {number} id
+ * @param {{ handledOrderNo: string, remark?: string }} data
+ */
+export function handleUnmatchedNotify(id, data) {
+  return request.post(`/admin/unmatched-notify/${id}/handle`, data)
+}
+
+/**
+ * 忽略某条未匹配收款（比如是别人转账、重复通知）
+ * @param {number} id
+ * @param {{ remark: string }} data
+ */
+export function ignoreUnmatchedNotify(id, data) {
+  return request.post(`/admin/unmatched-notify/${id}/ignore`, data)
+}
+
 // ==================== 通道管理 ====================
 
 /**

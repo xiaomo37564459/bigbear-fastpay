@@ -54,6 +54,10 @@
           <el-icon><List /></el-icon>
           <span>订单管理</span>
         </el-menu-item>
+        <el-menu-item index="/unmatched-notify">
+          <el-icon><Warning /></el-icon>
+          <span>未匹配收款</span>
+        </el-menu-item>
       </el-menu>
 
       <!-- 作者信息 -->

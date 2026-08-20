@@ -46,6 +46,12 @@ const routes = [
         meta: { title: '订单管理', icon: 'OrderedListOutlined' }
       },
       {
+        path: 'unmatched-notify',
+        name: 'UnmatchedNotify',
+        component: () => import('@/views/unmatched/index.vue'),
+        meta: { title: '未匹配收款', icon: 'Warning' }
+      },
+      {
         // 账号设置：改自己的登录账号和密码，从右上角头像菜单进入，不在左侧主菜单里
         path: 'profile',
         name: 'Profile',

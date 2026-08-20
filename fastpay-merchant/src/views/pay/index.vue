@@ -19,7 +19,10 @@
       <div class="result-title">支付成功</div>
       <div class="result-info">
         <p>订单号：{{ payData.orderNo }}</p>
-        <p>支付金额：<strong>¥{{ payData.amount }}</strong></p>
+        <p data-test="paid-amount">支付金额：<strong>¥{{ displayPayAmount }}</strong></p>
+        <p v-if="amountAdjusted" class="result-origin" data-test="paid-origin-amount">
+          订单金额 ¥{{ displayOrderAmount }}
+        </p>
       </div>
       <button class="btn btn-primary" @click="handleReturn">完成</button>
     </div>
@@ -40,10 +43,22 @@
           <div class="order-subject">{{ payData.subject }}</div>
         </div>
 
-        <!-- 金额 -->
+        <!-- 金额：显示的是这一单专属的实付金额，不是商户报的订单金额 -->
         <div class="pay-amount">
           <span class="currency">¥</span>
-          <span class="amount">{{ payData.amount }}</span>
+          <span class="amount" data-test="pay-amount">{{ displayPayAmount }}</span>
+        </div>
+
+        <!-- 必须按这个数付款的提示：金额付错了系统认不出是谁付的 -->
+        <div class="amount-alert" data-test="amount-alert">
+          <div class="amount-alert-main">
+            请务必按 <strong>{{ displayPayAmount }}</strong> 元付款
+            <button class="copy-btn" data-test="copy-amount" @click="copyPayAmount">复制金额</button>
+          </div>
+          <div class="amount-alert-desc">多付或少付都不会自动到账，需要联系客服处理。</div>
+          <div v-if="amountAdjusted" class="amount-alert-origin" data-test="amount-origin">
+            订单金额 ¥{{ displayOrderAmount }}；为了不和别人的订单混在一起，这一单要付 ¥{{ displayPayAmount }}。
+          </div>
         </div>
 
         <!-- 二维码 -->
@@ -59,6 +74,10 @@
               {{ payData.payType === 'wxpay' ? '微信' : '支付宝' }}
             </span>
             扫码支付
+          </div>
+          <!-- 个人收款码带不进金额，用户扫完还得自己输，这句话必须说在前面 -->
+          <div class="scan-tip" data-test="scan-tip">
+            扫码后金额要自己填，请输入 {{ displayPayAmount }} 元
           </div>
         </div>
 
@@ -79,7 +98,7 @@
 
       <!-- 提示 -->
       <div class="pay-notice">
-        <p class="warning"><strong>• 支付金额必须与订单金额完全一致</strong></p>
+        <p class="warning"><strong>• 付款金额必须正好是 {{ displayPayAmount }} 元，多一分少一分都认不到这笔订单</strong></p>
         <p><strong>• 请使用{{ payData.payType === 'wxpay' ? '微信' : '支付宝' }}扫描二维码完成支付</strong></p>
         <p><strong>• 支付完成后系统会自动确认，请勿重复支付</strong></p>
       </div>
@@ -96,6 +115,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast } from 'vant'
 import QRCode from 'qrcode'
 import { getPayPageData, getPayStatus } from '@/api'
+import { copyToClipboard } from '@/utils/orderDetail'
 
 const route = useRoute()
 const router = useRouter()
@@ -107,6 +127,40 @@ const qrcodeImage = ref('')  // 生成的二维码图片
 const countdown = ref(0)
 let countdownTimer = null
 let websocket = null
+
+/**
+ * 金额统一补成两位小数。
+ * 接口回来的 JSON 数字 10.00 到了浏览器就是 10，直接显示会变成「¥10」，
+ * 用户不知道该付 10 块还是 10 块几毛 —— 这一单就是靠金额认人的，写不清楚就会付错。
+ */
+const formatMoney = (value) => {
+  if (value === null || value === undefined || value === '') return ''
+  const num = Number(value)
+  return Number.isNaN(num) ? String(value) : num.toFixed(2)
+}
+
+// 这一单真正要付的钱。后端会在订单金额上下微调几分钱，保证同时挂着的订单金额互不相同，
+// 收到付款后才能认出是谁付的。老版本后端没返回 payAmount，退回订单金额，别显示空白。
+const displayPayAmount = computed(() => formatMoney(payData.value.payAmount ?? payData.value.amount))
+
+// 商户下单时报的原始金额
+const displayOrderAmount = computed(() => formatMoney(payData.value.amount))
+
+// 微调过才需要额外解释一句差额是哪来的，两个数一样就别啰嗦
+const amountAdjusted = computed(() =>
+  !!displayOrderAmount.value && displayOrderAmount.value !== displayPayAmount.value
+)
+
+// 复制实付金额，方便用户直接粘到付款页，少一次手输就少一次输错
+const copyPayAmount = async () => {
+  const text = displayPayAmount.value
+  if (!text) return
+  if (await copyToClipboard(text)) {
+    showToast({ message: `已复制 ${text}`, type: 'success' })
+  } else {
+    showToast({ message: `复制失败，请手动输入 ${text} 元`, type: 'fail' })
+  }
+}
 
 // 格式化倒计时
 const formatCountdown = computed(() => {
@@ -493,6 +547,69 @@ onUnmounted(() => {
   }
 }
 
+/* 实付金额提示：整页最该被看见的一块，用红底红字压住 */
+.amount-alert {
+  margin: 0 0 4px;
+  padding: 12px 14px;
+  background: #fff1f0;
+  border: 1px solid #ffccc7;
+  border-radius: 10px;
+  text-align: left;
+
+  .amount-alert-main {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #cf1322;
+
+    strong {
+      font-size: 18px;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+
+  .amount-alert-desc {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #a8071a;
+  }
+
+  .amount-alert-origin {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed #ffccc7;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #8c6f00;
+  }
+}
+
+.copy-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #cf1322;
+  background: #fff;
+  border: 1px solid #ffa39e;
+  border-radius: 6px;
+  cursor: pointer;
+
+  &:active {
+    transform: scale(0.96);
+  }
+}
+
+/* 成功页里的订单原价，比实付金额弱一档 */
+.result-origin {
+  font-size: 12px;
+  color: #999;
+}
+
 /* 二维码区域 */
 .qrcode-section {
   margin: 24px 0;
@@ -526,6 +643,13 @@ onUnmounted(() => {
     align-items: center;
     justify-content: center;
   }
+}
+
+.scan-tip {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #cf1322;
 }
 
 .scan-hint {
