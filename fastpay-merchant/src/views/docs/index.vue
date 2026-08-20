@@ -1303,7 +1303,8 @@ print(response.json())`
 
 .doc-nav {
   position: sticky;
-  top: 88px;
+  /* 跟着顶栏高度走：顶栏在手机上会变矮，写死 88px 会留一条空档 */
+  top: calc(var(--mc-header-h, 64px) + 24px);
 
   :deep(.el-menu) {
     border: none;
