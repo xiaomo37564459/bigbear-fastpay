@@ -74,7 +74,9 @@ if [ -f "$JAR" ]; then
   SVC_TS=$(date -d "$SVC_RAW" +%s 2>/dev/null || echo 0)
   if [ "$SVC_TS" -eq 0 ]; then
     warn "读不到服务启动时间，没法确认「换完 jar 有没有重启」，请手工看一眼"
-  elif [ "$SVC_TS" -gt "$JAR_TS" ]; then
+  # 用 >= 不用 >：中间隔着 scp 和 sleep 15，正常不会撞在同一秒，
+  # 但真撞上了也是"传完就重启了"，不该报成"换了 jar 没重启"。
+  elif [ "$SVC_TS" -ge "$JAR_TS" ]; then
     ok "服务是在 jar 更新之后启动的（jar $(date -d @"$JAR_TS" '+%F %T') → 启动 $(date -d @"$SVC_TS" '+%F %T')）"
   else
     no "jar 比服务启动时间还新 —— 说明换了 jar 没重启，现在跑的还是旧代码！执行 'systemctl restart $SERVICE'"
@@ -95,8 +97,11 @@ if [ -f "$VER_FILE" ]; then
   else
     no "版本对不上 —— 服务器上记的是 $DEPLOYED_VER，你说要发的是 $EXPECT_VER"
   fi
+elif [ -n "$EXPECT_VER" ]; then
+  # 你传了版本号，就是在要求「帮我核对是不是这一版」。核不了却报全绿，等于骗人 —— 判失败。
+  no "没有版本标记文件 $VER_FILE，核对不了是不是 $EXPECT_VER —— 部署时漏了这一步：ssh root@<服务器> \"echo $EXPECT_VER > $VER_FILE\"（见 docs/DEPLOY.md 第三节第 4 步）"
 else
-  warn "还没有版本标记文件 $VER_FILE。部署时加一句就有了：echo '<版本号>' > $VER_FILE"
+  warn "还没有版本标记文件 $VER_FILE，你也没传版本号，这一项跳过。部署时加一句就有了：echo '<版本号>' > $VER_FILE"
 fi
 
 # ---------------------------------------------------------------- 3. 接口通不通
@@ -161,7 +166,18 @@ else
   if [ "$DB_OUT" = "PARSE_FAIL" ]; then
     no "$ENV_FILE 里的 DB_URL 格式不对，应形如 jdbc:postgresql://主机:端口/库名"
   elif echo "$DB_OUT" | grep -qiE 'error|failed|could not'; then
-    no "连不上数据库。原始报错：$(echo "$DB_OUT" | head -2 | tr '\n' ' ')"
+    # 故意不打印 psql 的原始报错：它里面带着数据库地址和账号名
+    # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
+    # 而这份输出经常被贴回 issue 给人看，docs/SECRETS.md 明令内网地址一个字都不许进去。
+    # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次 psql。
+    case "$DB_OUT" in
+      *"password authentication failed"*)  DB_HINT='账号或口令不对' ;;
+      *"does not exist"*)                  DB_HINT='库名或账号不存在' ;;
+      *"Connection refused"*|*"could not connect"*|*"could not translate"*|*"timeout expired"*|*"no route to host"*)
+                                           DB_HINT='连不上（地址、端口、防火墙，或者数据库没起来）' ;;
+      *)                                   DB_HINT='其他错误' ;;
+    esac
+    no "连不上数据库：$DB_HINT。原始报错里带着服务器地址，这里不打印；要看原文就自己 SSH 上去手工跑一次 psql（连接信息在 $ENV_FILE）"
   else
     ok "数据库连得上"
     # V1_1：token_version 列必须在（少了后端根本起不来，这里再确认一次）

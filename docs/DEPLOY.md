@@ -186,7 +186,12 @@ ssh root@150.158.99.251 '
 # 3. 重启后端
 ssh root@150.158.99.251 'systemctl restart fastpay-server && sleep 15 && systemctl status fastpay-server --no-pager'
 
-# 4. 验一下
+# 4. 把这次发的版本号记到服务器上（把 v1.5.0 换成本次发的版本号）
+#    别跳过：第 5 步的验证脚本靠这个文件核对「发上去的到底是哪一版」。
+#    你传了版本号给脚本、这个文件却不在，脚本会直接判失败。
+ssh root@150.158.99.251 'echo v1.5.0 > /opt/fastpay/DEPLOYED_VERSION'
+
+# 5. 验一下
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-admin/
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merchant/
 ```
