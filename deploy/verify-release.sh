@@ -52,31 +52,70 @@ no()   { FAIL_N=$((FAIL_N+1)); printf '%s  ❌ FAIL%s  %s\n' "$C_NO" "$C_OFF" "$
 warn() { WARN_N=$((WARN_N+1)); printf '%s  ⚠️  注意%s  %s\n' "$C_WARN" "$C_OFF" "$1"; }
 head_() { printf '\n%s%s%s\n' "$C_B" "$1" "$C_OFF"; }
 
-# 上面那条「不打印数据库地址」的规矩，日志片段这里也得守住。
-# 日志里的 ERROR 经常整段带着 jdbc:postgresql://主机:端口/库名（Hikari 连不上库时就这样），
-# 原样打出来等于绕过前面的防线，把内网地址贴进 issue。所以透出去之前先过一遍这个。
-# 一路吃到空白或引号为止，中间的逗号分号照吃不误：数据库地址允许写成多台机器
-# （jdbc:postgresql://主机A:5432,主机B:5432/库名）。要是遇到逗号就停手，
-# 只会遮掉主机A，主机B 原样漏出去 —— 那等于白遮。宁可多遮，不能漏遮。
+# ======================= 遮蔽（mask）开始 =======================
+# 这份输出是要被贴回 issue 给人看的，所以凡是把外部内容原样透出来的地方（目前是日志片段）
+# 都先过一遍 mask。docs/SECRETS.md 明令：内网 IP 和内网机器名，一个字都不许进这个工作区。
 #
-# docs/SECRETS.md 那张「一个字都不许进」的清单上，内网机器名是跟 10.x.x.x 并排的，
-# 所以光挡 IP 和 jdbc 串不够 —— 数据库驱动报错里的机器名不带 jdbc: 也不是数字，
-# 会整句漏出去。下面按「怎么漏的」分四类挡，最后两条留着别动的东西：
-#   1) jdbc 连接串        2) 报错里点名地址的两种固定句式
-#   3) 内网后缀的机器名    4) IPv6
-# 注意别遮过头：pay.copliot.cloud 是公开域名、127.0.0.1 是本机，这两个本来就该看得见。
+# 三层叠着用，不指望任何一层单独管用：
+#   第一层（最强，不认句式）：开机时把 $ENV_FILE 里配的真实数据库主机名取出来，
+#     输出里只要出现这个字符串就换掉。不管哪个驱动、用哪句话把地址打出来都挡得住，
+#     以后数据库挪到别的机器、改用机器名连，也是这一层兜住。
+#   第二层（认已知句式）：jdbc 连接串，以及 pgjdbc / libpq 报连不上时那几句固定话术。
+#     这几句里的主机既没有 jdbc: 前缀、又不一定是数字 IP，只靠第一、三层会漏。
+#   第三层（兜底猜形状）：IPv6、数字 IP，以及「带点的机器名:端口」这种形状。
+#     形状规则是跳出「又发现一种写法会漏 → 再加一条后缀」那个死循环的办法：
+#     不去猜句式，只认地址长什么样。
+#
+# 两处不许遮（遮过头日志就没人看得懂了，也不该遮）：
+#   · 127.0.0.1 是本机地址，人人都一样，不是内网拓扑 —— 先换成占位符躲开，最后换回来
+#   · pay.copliot.cloud 是公开域名，SECRETS.md 里明写「放心写」
+#
+# 改这里之前先跑一遍 deploy/verify-release.test.sh —— 这个函数是专门用来防泄露的，
+# 正则动一个字符都可能开一个口子，而口子不会自己喊疼。
+
+# 取真实数据库主机名。整个取值过程关在子 shell 里，只把主机名带出来，口令绝不外泄。
+DB_HOST_REAL=$(
+  [ -r "$ENV_FILE" ] || exit 0
+  set -a; . "$ENV_FILE" 2>/dev/null; set +a
+  printf '%s' "${DB_URL:-}" | sed -nE 's#^jdbc:[a-z]+://([^:/?,]+).*#\1#p'
+)
+# 太短的名字（比如 db）拿去全局替换会把正常文字也误伤掉，短于 4 个字符就不用这一层。
+[ "${#DB_HOST_REAL}" -ge 4 ] || DB_HOST_REAL=''
+# 主机名里的点在正则里是通配符，替换前先转义掉
+DB_HOST_RE=$(printf '%s' "$DB_HOST_REAL" | sed 's#[][\.*^$/&]#\\&#g')
+
 mask() {
-  sed -E \
-    -e 's#\b127\.0\.0\.1\b#@@LOOPBACK@@#g' \
-    -e 's#(jdbc:[a-z]+://)[^[:space:]"]*#\1<地址已隐去>#g' \
-    -e 's#(Connection to )[^[:space:]"]+#\1<地址已隐去>#g' \
-    -e 's#(connection to server at )"[^"]+"#\1"<地址已隐去>"#g' \
-    -e 's#([A-Za-z0-9_-]+\.)+(internal|intranet|local|localdomain|lan|corp|priv)\b#<机器名已隐去>#g' \
-    -e 's#\b[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6})?#<IPv6已隐去>#g' \
-    -e 's#\b[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}\b#<IPv6已隐去>#g' \
-    -e 's#([0-9]{1,3}\.){3}[0-9]{1,3}#<IP已隐去>#g' \
-    -e 's#@@LOOPBACK@@#127.0.0.1#g'
+  # 开头先把本机地址藏起来，免得被第三层的 IP / 「名字:端口」规则顺手吃掉。
+  # 占位符里不带点，所以后面任何一条规则都不会认领它。
+  sed -E 's#\b127\.0\.0\.1\b#@@LOOPBACK@@#g' |
+    # 第一层：换掉 env 里配的那个真实主机名。取不到就原样放行，交给下面两层
+    #（QA 把这个函数单独抠出去测的时候走的就是 cat 这条路，第二三层照样得管用）
+    { if [ -n "${DB_HOST_RE:-}" ]; then sed -E "s#${DB_HOST_RE}#<地址已隐去>#gI"; else cat; fi; } |
+    # 第二层 a：jdbc 连接串。吃到空白或引号为止，不在逗号处收手 —— 多主机写法
+    # jdbc:postgresql://主机A:5432,主机B:5432/库 在逗号处停下会把后半个主机漏出去
+    sed -E 's#(jdbc:[a-z]+://)[^[:space:]"]*#\1<地址已隐去>#g' |
+    # 第二层 b：pgjdbc 连不上时的固定话术 "Connection to 主机:端口 refused. ..."。
+    # 只吃「带点的名字」或「名字:端口」，免得把 "Connection to the gateway timed out" 里的 the 也吃掉
+    sed -E 's#([Cc]onnection to )([A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+|[A-Za-z0-9_.-]+:[0-9]{1,5})#\1<地址已隐去>#g' |
+    # 第二层 c：libpq 的 connection to server at "主机", port 5432 failed
+    sed -E 's#(onnection to server at )"[^"]*"#\1"<地址已隐去>"#g' |
+    # 第二层 d：主机名解析不了时会把名字带引号打出来；Java 侧则是 UnknownHostException
+    sed -E -e 's#(host name )"[^"]*"#\1"<地址已隐去>"#gI' \
+           -e 's#(UnknownHostException:? )[^[:space:],;]+#\1<地址已隐去>#g' |
+    # 第三层 a：IPv6。要求出现 :: 或者满 8 段，才不会把日志时间戳 10:11:12.345 当成地址
+    sed -E -e 's#\b[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6})?#<IPv6已隐去>#g' \
+           -e 's#\b[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}\b#<IPv6已隐去>#g' |
+    # 第三层 b：数字 IP
+    sed -E 's#([0-9]{1,3}\.){3}[0-9]{1,3}#<IP已隐去>#g' |
+    # 第三层 c：兜底的「带点的机器名:端口」。堆栈里的 HikariPool.java:554 是源码行号不是地址，
+    # 先把这种冒号临时换成 \x01 躲开，兜底规则跑完再换回来
+    sed -E -e 's#\.(java|kt|scala|groovy|js|mjs|ts|tsx|py|rb|go|php|cs|c|cpp|h|xml|yml|yaml|sql|json|properties):([0-9]+)#.\1\x01\2#g' \
+           -e 's#\b[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+:[0-9]{1,5}#<地址已隐去>#g' \
+           -e 's#\x01#:#g' |
+    # 最后把本机地址换回来
+    sed -E 's#@@LOOPBACK@@#127.0.0.1#g'
 }
+# ======================= 遮蔽（mask）结束 =======================
 
 printf '\n===== FastPay 发版验证 =====\n'
 printf '服务器：%s\n' "$(hostname)"
@@ -223,14 +262,14 @@ else
     # 不管是哪种，一律只说「查不了」：不说「连得上」，也绝不说「V1_1 没生效」。
     # 下面只是尽量把话说具体一点，认不出来就照实说认不出来。
     if echo "$DB_OUT" | grep -qiE 'command not found|未找到命令|没有那个文件或目录|not found'; then
-      no "这台机器上没装 psql 客户端，数据库这一项查不了 —— 「V1_1 到位没」「V1_2 到位没」这两项也一并没查到"
+      no "这台机器上没装 psql 客户端，数据库这一项查不了 —— 「V1_1 到位没」「V1_2 到位没」这两项这次也没查"
       printf '         装上再跑一遍这个脚本：Debian/Ubuntu  apt-get install -y postgresql-client\n'
       printf '                               CentOS/Rocky   dnf install -y postgresql\n'
       printf '         ⚠️ 这不代表数据库有问题 —— 脚本压根没连过库。别去动数据库，也别去补跑迁移脚本。\n'
     elif [ -z "$DB_OUT" ]; then
       # 一个字都没有：多半是 env 里少了 DB_PASSWORD / DB_USERNAME，
       # set -u 把子 shell 当场打断，报错走的是脚本自己的 stderr，进不到 DB_OUT 里。
-      no "数据库这一项查不了：psql 一个字都没查回来 —— 「V1_1 到位没」「V1_2 到位没」这两项也一并没查到"
+      no "数据库这一项查不了：psql 一个字都没查回来 —— 「V1_1 到位没」「V1_2 到位没」这两项这次也没查"
       printf '         先检查 %s 里 DB_USERNAME / DB_PASSWORD 是不是漏配了，补全再跑一遍。\n' "$ENV_FILE"
       printf '         ⚠️ 这不代表数据库有问题 —— 脚本没查成任何东西。别去动数据库，也别去补跑迁移脚本。\n'
     else
@@ -238,14 +277,18 @@ else
       # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
       # 而这份输出经常被贴回 issue 给人看，docs/SECRETS.md 明令内网地址一个字都不许进去。
       # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次 psql。
+      # 分得细一点，人一眼能知道该去查哪儿。中文报错也认几句，认不出来就照实说认不出来。
       case "$DB_OUT" in
-        *"password authentication failed"*|*"身份验证失败"*)  DB_HINT='账号或口令不对' ;;
-        *"does not exist"*|*"不存在"*)                        DB_HINT='库名或账号不存在' ;;
-        *"Connection refused"*|*"could not connect"*|*"could not translate"*|*"timeout expired"*|*"no route to host"*|*"拒绝连接"*|*"超时"*)
-                                                              DB_HINT='连不上（地址、端口、防火墙，或者数据库没起来）' ;;
-        *)                                                    DB_HINT='报错认不出来（可能是中文或别的语言）' ;;
+        *"password authentication failed"*|*"身份验证失败"*)   DB_HINT='账号或口令不对' ;;
+        *"does not exist"*|*"不存在"*)                         DB_HINT='库名或账号不存在' ;;
+        *"could not translate host name"*|*"Name or service not known"*|*"UnknownHostException"*|*"无法解析"*)
+                                                               DB_HINT='主机名解析不了（DNS 或 /etc/hosts）' ;;
+        *"timeout expired"*|*"timed out"*|*"超时"*)            DB_HINT='连接超时（多半是网络或防火墙）' ;;
+        *"Connection refused"*|*"could not connect"*|*"no route to host"*|*"拒绝连接"*)
+                                                               DB_HINT='端口连不上（数据库可能没起来）' ;;
+        *)                                                     DB_HINT='原因不明（报错认不出来，可能是中文或别的语言）' ;;
       esac
-      no "数据库这一项查不了：$DB_HINT —— 「V1_1 到位没」「V1_2 到位没」这两项也一并没查到"
+      no "数据库这一项查不了：$DB_HINT —— 「V1_1 到位没」「V1_2 到位没」这两项这次也没查"
       printf '         原始报错里带着服务器地址和账号，按规矩不打印；要看原文自己 SSH 上去手工跑一次 psql（连接信息在 %s）。\n' "$ENV_FILE"
       printf '         ⚠️ 这不代表迁移脚本没跑 —— 脚本没连上库，什么都没查到。别去补跑迁移脚本。\n'
     fi
