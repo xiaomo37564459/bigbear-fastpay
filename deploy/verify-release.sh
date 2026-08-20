@@ -4,13 +4,17 @@
 #
 # 用法（在自己电脑上跑，不用先登服务器）：
 #
-#     ssh root@<服务器> 'bash -s v1.5.0' < deploy/verify-release.sh
+#     ssh root@<服务器> 'bash -s v1.6.0 MTM-210' < deploy/verify-release.sh
 #
 # 已经登在服务器上了也可以直接跑：
 #
-#     bash /root/fastpay-ops/verify-release.sh v1.5.0
+#     bash /root/fastpay-ops/verify-release.sh v1.6.0 MTM-210
 #
-# 参数：这次发的版本号（git tag），例如 v1.5.0。不传就跳过版本号比对。
+# 参数 1：这次发的版本号（git tag），例如 v1.6.0。不传就跳过版本号比对。
+# 参数 2：这次动生产用的操作锁令牌（就是你的 issue 编号），例如 MTM-210。
+#         传了它，脚本会顺便确认「这台机器现在是不是只有你一个人在动」——
+#         有别人占着锁就直接判失败。不传就只是把当前谁在动打出来看看。
+#         操作锁是什么，见 docs/DEPLOY.md 第零节。
 #
 # 退出码：全绿 = 0；有任何一项 FAIL = 1。可以直接串在部署命令后面。
 #
@@ -26,7 +30,10 @@
 set -uo pipefail
 
 EXPECT_VER="${1:-}"
+LOCK_TOKEN="${2:-}"
 
+OPS_DIR=/root/fastpay-ops
+LOCK_INFO="$OPS_DIR/prod-deploy.lock/holder"
 APP_DIR=/opt/fastpay
 JAR="$APP_DIR/fastpay-server-1.0.0.jar"
 ENV_FILE=/etc/fastpay/fastpay-server.env
@@ -309,6 +316,41 @@ if [ -r "$LOG_FILE" ]; then
 else
   warn "读不到日志文件 $LOG_FILE"
 fi
+
+# ---------------------------------------------------------------- 7. 有没有别人也在动这台机器
+head_ '七、同一时间只有你一个人在动这台机器吗'
+
+# 为什么要查这一项：2026-08-20 那次上线，两路人几乎同时在动同一台生产服务器，
+# 线上服务被重启了一次，重启的人不是当时正在操作的那个人。那次运气好没出事，
+# 但一边在换文件、另一边在重启，真出问题会极难排查。（背景：MTM-210）
+# 上面所有检查都有个隐含前提：**这段时间里没有别人在改这台机器**。
+# 前提不成立的话，前面全绿也说明不了什么 —— 你验的可能已经不是你发的那一版了。
+#
+# 改这一段之前先跑一遍 deploy/verify-release.test.sh。这里最要命的是「该判 FAIL 的
+# 判成了 PASS」—— 那等于把并发上线放行了，而放行是不会有任何报错的。
+# ======================= 操作锁检查（lock）开始 =======================
+LOCK_WHO=''; LOCK_TOK=''
+if [ -f "$LOCK_INFO" ]; then
+  LOCK_TOK=$(sed -n 's/^TOKEN=//p' "$LOCK_INFO" | head -n1)
+  LOCK_WHO=$(sed -n 's/^WHO=//p'   "$LOCK_INFO" | head -n1)
+fi
+
+if [ ! -x "$OPS_DIR/prod-lock.sh" ]; then
+  warn "这台机器上还没装操作锁（$OPS_DIR/prod-lock.sh），没法确认有没有人跟你同时在动。安装办法见 docs/DEPLOY.md 第零节"
+elif [ -n "$LOCK_TOKEN" ]; then
+  if [ -z "$LOCK_TOK" ]; then
+    no "你说你这次是拿着 $LOCK_TOKEN 这把锁在动生产，但机器上根本没有人占锁 —— 要么你压根没上锁就动了，要么锁被别人放掉了。两种情况都得先弄清楚，见 docs/DEPLOY.md 第零节"
+  elif [ "$LOCK_TOK" = "$LOCK_TOKEN" ]; then
+    ok "这台机器现在只有你在动（锁在 $LOCK_TOK / $LOCK_WHO 手上）。验完记得放开：$OPS_DIR/prod-lock.sh release $LOCK_TOKEN"
+  else
+    no "有别人正在动这台机器！锁在 $LOCK_TOK（$LOCK_WHO）手上，不是你的 $LOCK_TOKEN。两路人同时动同一台生产服务器 = 上面这些检查结果都不可信，立刻停手，去 $LOCK_TOK 那条 issue 下面对一下"
+  fi
+elif [ -n "$LOCK_TOK" ]; then
+  warn "现在有人正在动这台机器：$LOCK_TOK（$LOCK_WHO）。你看到的状态随时可能在变。要让脚本帮你把这一项判死，跑的时候把你的锁令牌当第 2 个参数传进来"
+else
+  ok "现在没有人占着操作锁，这台机器是空的"
+fi
+# ======================= 操作锁检查（lock）结束 =======================
 
 # ---------------------------------------------------------------- 汇总
 printf '\n===== 结果：%d 项通过，%d 项失败，%d 项要注意 =====\n' "$PASS_N" "$FAIL_N" "$WARN_N"

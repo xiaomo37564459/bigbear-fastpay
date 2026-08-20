@@ -153,7 +153,7 @@ jobs:
   #
   # 这一项很便宜（十几秒）：自测不连数据库、不要服务器、不要 root，只用 bash 跑一遍纯文本比对。
   deploy-verify:
-    name: 4·发版验证脚本自测（deploy/verify-release.sh）
+    name: 4·运维脚本自测（发版验证 + 生产操作锁）
     needs: merge-master
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -169,6 +169,13 @@ jobs:
 
       - name: 跑自测（bash deploy/verify-release.test.sh）
         run: bash deploy/verify-release.test.sh
+
+      # 生产操作锁：拦「两路人同时动同一台生产服务器」（MTM-210）。
+      # 这个脚本最要命的错法不是报错，是**该拦没拦** —— 放行是安安静静的，
+      # 没有任何报错也没有告警，等发现的时候两边已经在同一台机器上对着干了。
+      # 所以它必须有人替我们盯着，不能只靠改的人自己记得跑。
+      - name: 跑自测（bash deploy/prod-lock.test.sh）
+        run: bash deploy/prod-lock.test.sh
 
   summary:
     name: 5·一句话结论
