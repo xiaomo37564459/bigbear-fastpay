@@ -69,12 +69,35 @@ bash "$S" release MTM-210 >/dev/null 2>&1
 echo "===== 五、并发：20 个人同时抢，必须只有 1 个占到 ====="
 # 这一条是这把锁的全部意义所在。mkdir 的原子性一旦被换成「先判断再创建」，
 # 这里就会出现 2 个甚至更多赢家 —— 而线上表现就是两个人同时以为锁是自己的。
-for i in $(seq 1 20); do ( bash "$S" acquire "MTM-$i" "并发$i" "抢锁测试" 5 >/dev/null 2>&1 ) & done
+#
+# ⚠️ 量法很关键，别改回去。第一版是这么写的：
+#       WINS=$(bash "$S" status | grep -c '为了哪条')
+#   那是错的，而且错得很隐蔽：**不管有几个人以为自己抢到了，锁记录文件全局只有一份**
+#   （后写的盖掉先写的），所以那个数永远是 1，等于在断言「1 等于 1」，恒真、永远不会红。
+#   实测：把 mkdir 换成「先判断再创建」之后真有 3 个人抢到，那个量法照样打绿勾。
+#   （MTM-210 第 1 次验收被质量官挑出来的，用变异测试发现的。）
+#
+# 正确的量法是**数「acquire 真的返回成功的有几个」** —— 每个进程自己的退出码谁也盖不掉。
+RC=$(mktemp -d)
+for i in $(seq 1 20); do
+  ( bash "$S" acquire "MTM-$i" "并发$i" "抢锁测试" 5 >/dev/null 2>&1; echo "$?" > "$RC/$i" ) &
+done
 wait
-WINS=$(bash "$S" status 2>&1 | grep -c '为了哪条')
-if [ "$WINS" = "1" ]; then P=$((P+1)); printf '  ✅ 20 个并发只有 1 个占到锁\n'
-else F=$((F+1)); printf '  ❌ 并发结果异常：占到锁的有 %s 个（必须是 1）\n' "$WINS"; fi
-bash "$S" release "$(sed -n 's/^TOKEN=//p' "$FASTPAY_OPS_DIR/prod-deploy.lock/holder" 2>/dev/null)" >/dev/null 2>&1
+WINS=$(cat "$RC"/* 2>/dev/null | grep -c '^0$')
+# 顺带看一眼「赢家是谁」跟锁记录里写的是不是同一个人。正确实现下必然一致；
+# 抢锁出竞态时，最后写进文件的那个未必是第一个 mkdir 成功的那个。
+WINNER=''
+for f in "$RC"/*; do [ "$(cat "$f")" = "0" ] && WINNER="MTM-$(basename "$f")" && break; done
+rm -rf "$RC"
+HOLDER=$(sed -n 's/^TOKEN=//p' "$FASTPAY_OPS_DIR/prod-deploy.lock/holder" 2>/dev/null)
+
+if [ "$WINS" = "1" ]; then P=$((P+1)); printf '  ✅ 20 个并发里，acquire 真正成功的只有 1 个\n'
+else F=$((F+1)); printf '  ❌ 并发出竞态：有 %s 个 acquire 都返回了成功（必须只有 1 个）\n' "$WINS"; fi
+
+if [ -n "$WINNER" ] && [ "$WINNER" = "$HOLDER" ]; then P=$((P+1)); printf '  ✅ 锁记录里写的就是那个赢家（%s）\n' "$HOLDER"
+else F=$((F+1)); printf '  ❌ 锁记录里写的是 %s，但抢到的是 %s —— 记录跟事实对不上\n' "${HOLDER:-空}" "${WINNER:-无}"; fi
+
+bash "$S" release "$HOLDER" >/dev/null 2>&1
 
 echo "===== 六、参数校验 ====="
 t "缺参数 —— 打用法，退出码 2"                2 bash "$S" acquire MTM-210
