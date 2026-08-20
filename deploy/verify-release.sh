@@ -15,7 +15,8 @@
 # 退出码：全绿 = 0；有任何一项 FAIL = 1。可以直接串在部署命令后面。
 #
 # ⚠️ 这个脚本只读，不改任何东西：不写数据库、不改配置、不重启服务。
-# ⚠️ 它读 /etc/fastpay/fastpay-server.env 拿数据库地址，但绝不会把里面的值打印出来。
+# ⚠️ 它读 /etc/fastpay/fastpay-server.env 拿数据库地址，但绝不会把里面的值打印出来；
+#    日志片段这类原样透出来的内容，也会先把连接串和 IP 换成占位符再打印（见下面的 mask）。
 #
 # 这个脚本验不了什么，别误以为它全包了：
 #   它只能确认「发上去的是对的版本、系统活着、结构对得上」，
@@ -50,6 +51,16 @@ ok()   { PASS_N=$((PASS_N+1)); printf '%s  ✅ PASS%s  %s\n' "$C_OK" "$C_OFF" "$
 no()   { FAIL_N=$((FAIL_N+1)); printf '%s  ❌ FAIL%s  %s\n' "$C_NO" "$C_OFF" "$1"; }
 warn() { WARN_N=$((WARN_N+1)); printf '%s  ⚠️  注意%s  %s\n' "$C_WARN" "$C_OFF" "$1"; }
 head_() { printf '\n%s%s%s\n' "$C_B" "$1" "$C_OFF"; }
+
+# 这份输出是要被贴回 issue 给人看的，所以凡是把服务器上的原文原样透出来的内容
+# （目前只有日志片段）都先过一遍这个：把数据库连接串和 IP 换成占位符。
+# 日志里的报错经常整段带着 jdbc:postgresql://主机:端口/库名，不挡一下就等于把内网地址贴出去，
+# docs/SECRETS.md 明令内网地址一个字都不许进工作区。
+# 注意它只是个 sed 过滤器（没有 -i），不改任何文件，脚本仍然是只读的。
+mask() {
+  sed -E -e 's#(jdbc:[a-z]+://)[^[:space:],;"]*#\1<地址已隐去>#g' \
+         -e 's#([0-9]{1,3}\.){3}[0-9]{1,3}#<IP已隐去>#g'
+}
 
 printf '\n===== FastPay 发版验证 =====\n'
 printf '服务器：%s\n' "$(hostname)"
@@ -165,6 +176,12 @@ else
 
   if [ "$DB_OUT" = "PARSE_FAIL" ]; then
     no "$ENV_FILE 里的 DB_URL 格式不对，应形如 jdbc:postgresql://主机:端口/库名"
+  # 这台机器上没装 psql 客户端时，报错是 'psql: command not found'，
+  # error / failed / could not 这三个词一个都不沾。不单独拎出来的话它会一路掉到最后的 else，
+  # 打出一句「数据库连得上」—— 可它一次都没连过；再往下还会因为查不到 token_version 列
+  # 而叫人去补跑 V1_1 迁移脚本：数据库明明好好的，却把人指去动数据库，方向正好指反了。
+  elif echo "$DB_OUT" | grep -qi 'command not found'; then
+    no "这台机器上没装 psql 客户端，数据库这一整节一项都没查到（这不代表数据库有问题，别去动数据库和迁移脚本）。装上客户端再重跑本脚本：Debian/Ubuntu 'apt-get install -y postgresql-client'；CentOS/Rocky 'dnf install -y postgresql'"
   elif echo "$DB_OUT" | grep -qiE 'error|failed|could not'; then
     # 故意不打印 psql 的原始报错：它里面带着数据库地址和账号名
     # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
@@ -203,8 +220,9 @@ if [ -r "$LOG_FILE" ]; then
   if [ "$ERR_N" -eq 0 ]; then
     ok "最近 500 行日志里没有 ERROR"
   else
-    warn "最近 500 行日志里有 $ERR_N 条 ERROR，看一眼是不是这次带出来的："
-    tail -n 500 "$LOG_FILE" | grep ' ERROR ' | tail -3 | cut -c1-160 | sed 's/^/         /'
+    warn "最近 500 行日志里有 $ERR_N 条 ERROR，看一眼是不是这次带出来的（地址已隐去，要看原文上服务器）："
+    # 先 mask 再 cut：顺序反了的话，160 字符正好把连接串截成两半，前半截地址照样露出来。
+    tail -n 500 "$LOG_FILE" | grep ' ERROR ' | tail -3 | mask | cut -c1-160 | sed 's/^/         /'
   fi
 else
   warn "读不到日志文件 $LOG_FILE"
