@@ -13,9 +13,10 @@ import java.sql.Connection;
  * 用来配合前端 vite dev server 做端到端点击验证 —— 不依赖机器上装没装 Postgres/Docker，
  * 也不污染任何真实数据库。
  *
- * 用法：
- *   mvn -pl fastpay-server test-compile
- *   mvn -pl fastpay-server exec:java -Dexec.classpathScope=test -Dexec.mainClass=com.fastpay.LocalSmokeRunner
+ * 用法（仓库根目录没有聚合 pom，所以要先 cd 进 fastpay-server 再跑，别用 -pl）：
+ *   cd fastpay-server
+ *   mvn test-compile
+ *   mvn exec:java -Dexec.classpathScope=test -Dexec.mainClass=com.fastpay.LocalSmokeRunner
  *
  * 启动完成后：
  *   - 后端地址：http://localhost:7001/fastpay-server
