@@ -1,0 +1,34 @@
+# 每次往分支推代码，都查一下「这个分支还能不能合进主干」。
+#
+# 为什么要单独开一个：GitHub 有个坑 —— 一个 PR 一旦跟主干真的冲突了，它就**根本不会**去跑
+# PR 上的那套检查（`pr-check.yml`）。因为 PR 的检查是跑在「你的分支和主干合好之后的临时版本」上的，
+# 合都合不出来，它就干脆不跑了，PR 上一项检查都看不到。
+#
+# 所以冲突这件事得靠「推代码」这个时机来查：推代码不需要先合并，一定跑得起来。
+# 这一项很快（十几秒），只做一件事：把主干合进来试试，合不上就红，并说清是哪几个文件打架。
+name: 分支跟主干打架没
+
+on:
+  push:
+    branches-ignore:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conflict-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conflict:
+    name: 跟主干合得上吗
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/merge-master
+        with:
+          base: ${{ github.event.repository.default_branch }}
