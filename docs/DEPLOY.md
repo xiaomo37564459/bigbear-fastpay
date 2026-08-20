@@ -205,6 +205,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 | `v1.2.0` | `V1_1__admin_account_management_pg.sql` | `fp_admin.username` 放宽到 100 字符；新增 `token_version INT DEFAULT 0` 列 |
 | `v1.3.0` | **无** | 这一版都是文档和前端改动，不动表结构 |
 | `v1.4.0` | `V1_2__password_hash_bcrypt_pg.sql` | `fp_admin.password`、`fp_merchant.password` 从 64 放宽到 255 字符，容纳 bcrypt |
+| `v1.5.0` | **无** | 这一版是 CI 流程、文档和 `.gitignore` 改动，不动表结构（可部署产物与 `v1.4.0` 完全一致，当时未重新部署） |
 
 几条配套说明：
 
@@ -237,7 +238,22 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 
 步骤和上面 `V1_1` / `V1_2` 完全一样：把 `scp` 和 `psql` 命令里的文件名换成 `V1_3__order_notify_result_pg.sql`，其余照抄。
 
-**迁移脚本的执行顺序是 `V1_1` → `V1_2` → `V1_3`。** 库落后好几版时按顺序补跑，三个脚本都是幂等的，已经跑过的再跑一遍不会出事。
+**「两人同价撞单认错人」版本需要执行的迁移脚本清单**（`V1_4`）：
+
+| 数据库 | 脚本 | 做了什么 |
+| --- | --- | --- |
+| PostgreSQL（生产） | `db/migration/V1_4__pay_amount_uniqueness_pg.sql` | 新增 `fp_pending_pay_amount`（待支付金额占位表，同商户同支付方式下未支付金额唯一）和 `fp_unmatched_notify`（钱到了但认不到订单的记录）两张表；补齐老订单的 `pay_amount`；把老的重复未支付订单消解掉并塞进占位表 |
+| MySQL（本地/老装机） | `db/migration/V1_4__pay_amount_uniqueness_mysql.sql` | 同上，MySQL 方言 |
+
+步骤和前面几个完全一样：把 `scp` 和 `psql` 命令里的文件名换成 `V1_4__pay_amount_uniqueness_pg.sql`，其余照抄。
+
+> ⚠️ **这个脚本和前面几个不一样，它会动已有数据**（补 `pay_amount`、关掉重复的老未支付订单）。所以**跑之前一定要先做完 0 步骤里的整库备份**，别跳过。
+>
+> ⚠️ **顺序不能反**：必须先跑脚本、再换 jar。反过来做，新订单在占位表还不存在的那段时间里会直接报错。
+
+**迁移脚本的执行顺序是 `V1_1` → `V1_2` → `V1_3` → `V1_4`。** 库落后好几版时按顺序补跑，四个脚本都是幂等的，已经跑过的再跑一遍不会出事。
+
+> 📌 **编号不会重复，一个编号只对应一件事。** 早先 `V1_4__pay_amount_uniqueness_*.sql` 曾被误编成 `V1_2`，和 `V1_2__password_hash_bcrypt_*.sql` 撞了号 —— 手工敲命令的人会分不清该跑哪一个，用 `V1_2*` 这种通配符还会两个一起跑掉。现已改名修正。**以后加新脚本前，先看一眼 `db/migration/` 目录里已经用到哪个编号了，往后顺延。**
 
 > 💡 **上线前实测过**（PostgreSQL 14，一张 20 万行订单的表）：加这两列**耗时个位数毫秒**，不锁表、不需要停机窗口；20 万行老订单一行没动，两个新列是 `NULL`（不会在后台误显示成「回调成功」）。回退脚本也实测过：执行完订单数据一行没丢，退完还能再升回去。
 >

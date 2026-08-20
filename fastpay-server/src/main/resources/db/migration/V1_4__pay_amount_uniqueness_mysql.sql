@@ -1,5 +1,5 @@
 -- =====================================================
--- Fast 易支付 数据库迁移脚本 V1.2（MySQL / MariaDB）
+-- Fast 易支付 数据库迁移脚本 V1.4（MySQL / MariaDB）
 -- 主题：解决"两人同价撞单认错人"（MTM-170）
 -- 说明：老库升级用。新库直接跑 init.sql 已经是新结构，不需要这里
 --
@@ -18,7 +18,7 @@
 --      （不然升级后的短暂窗口里，新订单查占位表"金额没人占"→ 又拿到老单同金额 → bug 复发）
 --
 -- 生产库怎么跑（在部署新版 jar、重启后端之前执行）：
---   mysql -h <host> -P 3306 -u <user> -p bigbear_fastpay < V1_2__pay_amount_uniqueness_mysql.sql
+--   mysql -h <host> -P 3306 -u <user> -p bigbear_fastpay < V1_4__pay_amount_uniqueness_mysql.sql
 --
 -- 注意：本项目当前生产环境跑的是 PostgreSQL，MySQL 版仅为老装机 / 本地开发环境预留。
 -- =====================================================
