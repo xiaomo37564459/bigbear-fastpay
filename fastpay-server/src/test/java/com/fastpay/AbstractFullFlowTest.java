@@ -434,8 +434,8 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(14)
-    void step14_successfulNotifyPersistsResponseAndOrderSource() throws Exception {
+    @Order(40)
+    void step40_successfulNotifyPersistsResponseAndOrderSource() throws Exception {
         // 自建本地 HttpServer 处理一次真实回调（返回 "success"），确保它落库后再关服务器
         // ——不复用 step13 的服务，因为那里在 poll 到请求后立即 stop(0)，会把回写数据库的最后一段掐掉。
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -495,8 +495,8 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(15)
-    void step15_failedNotifyPersistsErrorMessage() throws Exception {
+    @Order(41)
+    void step41_failedNotifyPersistsErrorMessage() throws Exception {
         // 造一笔易支付订单，notify_url 指到一个绝对连不上的端口（127.0.0.1:1，特权端口，本地也不会有人监听）
         // 触发一次确认支付 → 异步回调 → 回调失败 → 错误信息应落库
         Map<String, String> params = new LinkedHashMap<>();
@@ -541,8 +541,8 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(16)
-    void step16_adminOrderDetailReturnsMerchantShopAndSource() throws Exception {
+    @Order(42)
+    void step42_adminOrderDetailReturnsMerchantShopAndSource() throws Exception {
         // 详情接口口径要跟列表一致，返回 merchantName / shopName / orderSource
         JsonNode admin = dataOf(getJson("/api/admin/order/" + firstOrderNo, adminToken));
         assertThat(admin.get("merchantName").asText()).isEqualTo("IT Test Merchant");
@@ -552,8 +552,8 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(17)
-    void step17_merchantOrderDetailReturnsMerchantShopAndSource() throws Exception {
+    @Order(43)
+    void step43_merchantOrderDetailReturnsMerchantShopAndSource() throws Exception {
         JsonNode merchant = dataOf(getJson("/api/merchant/order/" + firstOrderNo, merchantToken));
         assertThat(merchant.get("merchantName").asText()).isEqualTo("IT Test Merchant");
         assertThat(merchant.get("shopName").asText()).isEqualTo("IT Test Shop");
@@ -561,8 +561,8 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(18)
-    void step18_adminOrderDetailEpaySource() throws Exception {
+    @Order(44)
+    void step44_adminOrderDetailEpaySource() throws Exception {
         // 易支付进来的订单，详情里 order_source 必须是 epay
         assertThat(epayCallbackOrderNo).isNotBlank();
         JsonNode admin = dataOf(getJson("/api/admin/order/" + epayCallbackOrderNo, adminToken));
@@ -571,8 +571,8 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(19)
-    void step19_orderListIncludesOrderSourceOnBothSides() throws Exception {
+    @Order(45)
+    void step45_orderListIncludesOrderSourceOnBothSides() throws Exception {
         // 列表接口本来就是查全字段，这里显式断言 order_source 键存在且非空，别哪天有人手抖砍字段
         JsonNode adminPage = dataOf(getJson("/api/admin/order/page?current=1&size=20", adminToken));
         JsonNode adminRecords = adminPage.get("records");
@@ -599,8 +599,8 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(20)
-    void step20_merchantCannotReadOtherMerchantOrder() throws Exception {
+    @Order(46)
+    void step46_merchantCannotReadOtherMerchantOrder() throws Exception {
         // 场景：商户 A 名下有订单，商户 B 名下没有；B 拿到 A 的订单号来查详情，必须被拒。
         // 这段回归的是 QA 在验收 MTM-157 时发现的越权：改之前详情接口不校验归属，
         // 商户 B 能把 A 的商户名、店铺名、回调返回内容整个读走。
