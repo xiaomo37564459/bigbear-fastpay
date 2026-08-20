@@ -47,3 +47,6 @@ desktop.ini
 *.jks
 id_rsa*
 id_ed25519*
+.vscode/
+*.swp
+*.swo
