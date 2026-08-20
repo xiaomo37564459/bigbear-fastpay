@@ -241,7 +241,7 @@ else
   # 数据库明明好好的，却把人指去重跑迁移 —— 方向正好指反，而且指向一个会改库的动作。
   #
   # 所以反过来：psql 必须真的把 username= 那一行查回来，才算连上。其余一律算查不了。
-  elif echo "$DB_OUT" | grep -q '^username='; then
+  elif ! echo "$DB_OUT" | grep -qiE 'error|failed|could not|command not found'; then
     ok "数据库连得上"
     # V1_1：token_version 列必须在（少了后端根本起不来，这里再确认一次）
     echo "$DB_OUT" | grep -q '^token_version=' \
