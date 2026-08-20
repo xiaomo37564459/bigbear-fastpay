@@ -1,0 +1,108 @@
+name: 合最新主干
+description: 把主干（master）最新的代码合进当前分支。合不上就明确报「跟主干冲突了」并直接失败。
+
+inputs:
+  base:
+    description: 主干分支名，默认 master
+    required: false
+    default: master
+  master-sha:
+    description: 指定要合入的主干提交号。留空就用主干最新的那一笔。第一个任务算出来之后，后面几个任务都传同一个值，保证几项检查跑的是同一个主干版本。
+    required: false
+    default: ''
+
+outputs:
+  master-sha:
+    description: 这次真正合进来的主干提交号
+    value: ${{ steps.merge.outputs.master-sha }}
+  head-sha:
+    description: 这个 PR 分支本身的提交号
+    value: ${{ steps.merge.outputs.head-sha }}
+
+runs:
+  using: composite
+  steps:
+    - id: merge
+      shell: bash
+      env:
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_MASTER_SHA: ${{ inputs.master-sha }}
+      run: |
+        set -euo pipefail
+
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        BASE="${INPUT_BASE:-master}"
+        HEAD_SHA="$(git rev-parse HEAD)"
+
+        # 把主干最新的历史抓下来。上一步 checkout 用了 fetch-depth: 0，所以这里拿得到完整历史，
+        # 也就拿得到合并需要的共同祖先。
+        git fetch --no-tags --prune origin "+refs/heads/${BASE}:refs/remotes/origin/${BASE}"
+
+        MASTER_SHA="${INPUT_MASTER_SHA}"
+        if [ -z "${MASTER_SHA}" ]; then
+          MASTER_SHA="$(git rev-parse "origin/${BASE}")"
+        fi
+        if ! git cat-file -e "${MASTER_SHA}^{commit}" 2>/dev/null; then
+          echo "::error title=找不到指定的主干版本::${MASTER_SHA} 在仓库历史里不存在（主干被强推过？）"
+          exit 1
+        fi
+
+        echo "master-sha=${MASTER_SHA}" >> "$GITHUB_OUTPUT"
+        echo "head-sha=${HEAD_SHA}"     >> "$GITHUB_OUTPUT"
+
+        echo "===================================================================="
+        echo " 这次跑测试用的是「你的分支 + 主干最新代码」合起来之后的样子"
+        echo " 主干（${BASE}）版本号 : ${MASTER_SHA}"
+        echo " 你这个分支的版本号     : ${HEAD_SHA}"
+        echo "===================================================================="
+        echo "主干那一笔提交是："
+        git --no-pager log -1 --format='  %h %an %ad%n  %s' --date=iso "${MASTER_SHA}"
+        echo "===================================================================="
+
+        {
+          echo "### 这次是基于哪个主干版本跑的"
+          echo ""
+          echo "| | 提交号 |"
+          echo "|---|---|"
+          echo "| 主干（\`${BASE}\`）最新 | [\`${MASTER_SHA}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${MASTER_SHA}) |"
+          echo "| 你这个分支 | [\`${HEAD_SHA}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${HEAD_SHA}) |"
+          echo ""
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if git merge --no-ff --no-edit "${MASTER_SHA}"; then
+          echo "✅ 主干代码干净地合进来了，下面开始跑测试"
+          echo "✅ 主干代码干净地合进来了，测试跑的就是合并之后的代码。" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        CONFLICTS="$(git diff --name-only --diff-filter=U || true)"
+
+        echo "::error title=跟主干冲突了::你这个分支合不进今天最新的主干，需要先自己把主干合进来解掉冲突，再推一次。冲突文件见下方。"
+        echo ""
+        echo "以下文件跟主干打架了："
+        echo "${CONFLICTS}" | sed 's/^/  - /'
+
+        {
+          echo "### ❌ 跟主干冲突了"
+          echo ""
+          echo "你这个分支**合不进**今天最新的主干，所以测试根本没法跑。"
+          echo ""
+          echo "打架的文件："
+          echo ""
+          echo '```'
+          echo "${CONFLICTS}"
+          echo '```'
+          echo ""
+          echo "**怎么办**：在你自己的分支上执行下面两条命令，把冲突解掉再推一次。"
+          echo ""
+          echo '```bash'
+          echo "git fetch origin ${BASE}"
+          echo "git merge origin/${BASE}   # 解冲突 -> git add -> git commit"
+          echo "git push"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        git merge --abort || true
+        exit 1
