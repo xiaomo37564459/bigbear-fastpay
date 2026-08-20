@@ -369,12 +369,18 @@ abstract class AbstractFullFlowTest {
 
     // ============================================================
     // 以下 step14 ~ step20 覆盖 MTM-170：pay_amount 微调 + 撞单认对人 + 幂等 + 未匹配落表 +
-    // 易支付 money 回传原始 amount + release 契约 + 迁移脚本行为
-    // 都放在 step13 之后，避免动 step6/step8 的既有断言口径
+    // 易支付 money 回传原始 amount + release 契约 + 迁移脚本行为。
+    //
+    // 排在 MTM-180 的 step20~step27 之后（@Order 30~36），因为 MTM-180 那批"商户订单查询筛选"测试
+    // 拿写死的订单数量做断言：本商户下 wxpay=5、UNPAID=2、EPAY 前缀=3 …… 而这里的 step14/15/17/18
+    // 会往同一商户塞额外的订单（撞单/未匹配/易支付），如果放前面跑，MTM-180 那几条数量断言会全红。
+    //
+    // 之前 @Order 用的是 14~20，其中 step20_migrationScript... 还跟 MTM-180 的
+    // step20_merchantOrderSearch_orderNoHitsExactlyOne 撞号，本次一并挪开。
     // ============================================================
 
     @Test
-    @Order(14)
+    @Order(30)
     void step14_sameAmountOrdersGetDistinctPayAmounts() throws Exception {
         String orderA = createSignedOrder("IT_C0000001", "5.00", "撞单-A");
         String orderB = createSignedOrder("IT_C0000002", "5.00", "撞单-B");
@@ -391,7 +397,7 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(15)
+    @Order(31)
     void step15_notifyMatchesByPayAmountNotByAmount() throws Exception {
         // 场景：A 先下单 5.55 不付、B 后下单 5.55 付款，通知带的是 B 的 pay_amount
         String orderA = createSignedOrder("IT_M0000001", "5.55", "撞单认对人-A");
@@ -412,7 +418,7 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(16)
+    @Order(32)
     void step16_duplicateNotifyIsIdempotent() throws Exception {
         String orderNo = createSignedOrder("IT_D0000001", "6.66", "重复通知幂等");
         BigDecimal payAmount = readPayAmount(orderNo);
@@ -435,7 +441,7 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(17)
+    @Order(33)
     void step17_unmatchedNotifyIsRecordedAndVisibleInAdmin() throws Exception {
         long unmatchedBefore = countUnmatchedNotifyByAmount(new BigDecimal("999.99"));
 
@@ -462,7 +468,7 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(18)
+    @Order(34)
     void step18_epayCallbackMoneyKeepsOriginalAmount() throws Exception {
         // 起本地 HTTP 服务捕获易支付回调
         BlockingQueue<CapturedRequest> captured = new ArrayBlockingQueue<>(4);
@@ -529,7 +535,7 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(19)
+    @Order(35)
     void step19_releaseByAmountOnlyDoesNotStealOtherOrdersReservation() throws Exception {
         // 场景：老 release() 只按 (merchant, payType, amount) 三个条件删。并发场景下（比如
         // 一笔已过期订单被两条路径同时触发释放），中间又有一笔新订单刚好抢到了同一金额，
@@ -556,7 +562,7 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(20)
+    @Order(36)
     void step20_migrationScriptCollapsesLegacyUnpaidConflicts() throws Exception {
         // 目的：验证 V1_2 迁移脚本的 4a/4b 两步。老库升级时如果有多笔 UNPAID 撞金额，
         // 4a 只保留最早创建的那笔、其它关掉；4b 把剩下的塞进占位表，让新版后端一启动
