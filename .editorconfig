@@ -1,0 +1,31 @@
+# EditorConfig：统一各家编辑器的缩进、换行、尾部空格等格式
+# 主流编辑器（IntelliJ IDEA、VS Code、WebStorm、Sublime 等）都原生识别这个文件
+# 目的：不同开发者用不同编辑器，也不会因为格式差异搞出「整文件被重写」的假 diff
+# 详细语法见 https://editorconfig.org
+
+root = true
+
+# ---------- 全项目默认规则 ----------
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# ---------- 前端相关：2 空格缩进 ----------
+[*.{vue,js,jsx,ts,tsx,mjs,cjs,html,htm,css,scss,sass,less,json,yml,yaml}]
+indent_size = 2
+
+# ---------- Markdown：不能删尾部空格（尾部两个空格是换行语法） ----------
+[*.md]
+trim_trailing_whitespace = false
+
+# ---------- Makefile：必须用 tab 缩进 ----------
+[{Makefile,makefile,*.mk}]
+indent_style = tab
+
+# ---------- Windows 批处理：CRLF 换行 ----------
+[*.{bat,cmd}]
+end_of_line = crlf
