@@ -58,9 +58,24 @@ head_() { printf '\n%s%s%s\n' "$C_B" "$1" "$C_OFF"; }
 # 一路吃到空白或引号为止，中间的逗号分号照吃不误：数据库地址允许写成多台机器
 # （jdbc:postgresql://主机A:5432,主机B:5432/库名）。要是遇到逗号就停手，
 # 只会遮掉主机A，主机B 原样漏出去 —— 那等于白遮。宁可多遮，不能漏遮。
+#
+# docs/SECRETS.md 那张「一个字都不许进」的清单上，内网机器名是跟 10.x.x.x 并排的，
+# 所以光挡 IP 和 jdbc 串不够 —— 数据库驱动报错里的机器名不带 jdbc: 也不是数字，
+# 会整句漏出去。下面按「怎么漏的」分四类挡，最后两条留着别动的东西：
+#   1) jdbc 连接串        2) 报错里点名地址的两种固定句式
+#   3) 内网后缀的机器名    4) IPv6
+# 注意别遮过头：pay.copliot.cloud 是公开域名、127.0.0.1 是本机，这两个本来就该看得见。
 mask() {
-  sed -E -e 's#(jdbc:[a-z]+://)[^[:space:]"]*#\1<地址已隐去>#g' \
-         -e 's#([0-9]{1,3}\.){3}[0-9]{1,3}#<IP已隐去>#g'
+  sed -E \
+    -e 's#\b127\.0\.0\.1\b#@@LOOPBACK@@#g' \
+    -e 's#(jdbc:[a-z]+://)[^[:space:]"]*#\1<地址已隐去>#g' \
+    -e 's#(Connection to )[^[:space:]"]+#\1<地址已隐去>#g' \
+    -e 's#(connection to server at )"[^"]+"#\1"<地址已隐去>"#g' \
+    -e 's#([A-Za-z0-9_-]+\.)+(internal|intranet|local|localdomain|lan|corp|priv)\b#<机器名已隐去>#g' \
+    -e 's#\b[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6})?#<IPv6已隐去>#g' \
+    -e 's#\b[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}\b#<IPv6已隐去>#g' \
+    -e 's#([0-9]{1,3}\.){3}[0-9]{1,3}#<IP已隐去>#g' \
+    -e 's#@@LOOPBACK@@#127.0.0.1#g'
 }
 
 printf '\n===== FastPay 发版验证 =====\n'
@@ -177,33 +192,17 @@ else
 
   if [ "$DB_OUT" = "PARSE_FAIL" ]; then
     no "$ENV_FILE 里的 DB_URL 格式不对，应形如 jdbc:postgresql://主机:端口/库名"
-  # 'command not found' 也要算进来：这台机器上没装 psql 客户端时报的就是这句。
-  # 它不含 error / failed / could not，不认它的话会掉进下面的 else，打出一句
-  # 「数据库连得上」——根本没连过，跟「漏写版本标记也报全绿」是同一种假装通过。
-  elif echo "$DB_OUT" | grep -qiE 'error|failed|could not|command not found'; then
-    if echo "$DB_OUT" | grep -qi 'command not found'; then
-      # 单独拎出来说，别混进「连不上数据库」那一句：这里根本没连过库。
-      # 话必须说全 —— 只写一句「查不了」，半夜看到的人会顺着下面「补跑 V1_1 迁移」
-      # 的思路去动数据库，方向正好指反。
-      no "这台机器上没装 psql 客户端，数据库这一项查不了 —— 「V1_1 到位没」「V1_2 到位没」这两项也一并没查到"
-      printf '         装上再跑一遍这个脚本：Debian/Ubuntu  apt-get install -y postgresql-client\n'
-      printf '                               CentOS/Rocky   dnf install -y postgresql\n'
-      printf '         ⚠️ 这不代表数据库有问题 —— 脚本压根没连过库。别去动数据库，也别去补跑迁移脚本。\n'
-    else
-      # 故意不打印 psql 的原始报错：它里面带着数据库地址和账号名
-      # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
-      # 而这份输出经常被贴回 issue 给人看，docs/SECRETS.md 明令内网地址一个字都不许进去。
-      # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次 psql。
-      case "$DB_OUT" in
-        *"password authentication failed"*)  DB_HINT='账号或口令不对' ;;
-        *"does not exist"*)                  DB_HINT='库名或账号不存在' ;;
-        *"Connection refused"*|*"could not connect"*|*"could not translate"*|*"timeout expired"*|*"no route to host"*)
-                                             DB_HINT='连不上（地址、端口、防火墙，或者数据库没起来）' ;;
-        *)                                   DB_HINT='其他错误' ;;
-      esac
-      no "连不上数据库：$DB_HINT。原始报错里带着服务器地址，这里不打印；要看原文就自己 SSH 上去手工跑一次 psql（连接信息在 $ENV_FILE）"
-    fi
-  else
+
+  # 判断依据是「**看见了预期的东西才算过**」，不是「没看见我认识的报错就算过」。
+  #
+  # 以前是按报错措辞匹配（error / failed / could not…）。那等于默认「查不出毛病就是好的」，
+  # 而同一件事在不同机器上会说出不同的话：中文机器报「未找到命令」、env 漏配口令时
+  # 子 shell 被 set -u 打断、DB_OUT 干脆是空的 —— 这些都匹配不上，于是打出
+  # 「数据库连得上」，紧接着又报「V1_1 没生效，补跑迁移脚本」。
+  # 数据库明明好好的，却把人指去重跑迁移 —— 方向正好指反，而且指向一个会改库的动作。
+  #
+  # 所以反过来：psql 必须真的把 username= 那一行查回来，才算连上。其余一律算查不了。
+  elif echo "$DB_OUT" | grep -q '^username='; then
     ok "数据库连得上"
     # V1_1：token_version 列必须在（少了后端根本起不来，这里再确认一次）
     echo "$DB_OUT" | grep -q '^token_version=' \
@@ -216,6 +215,39 @@ else
       ok "V1_2 已生效：两个 password 字段都已放宽到 $ADM_PW / $MCH_PW"
     else
       warn "V1_2 可能没跑：password 字段宽度是 ${ADM_PW:-?} / ${MCH_PW:-?}，期望 ≥255。bcrypt 是 60 字符，暂时不会出故障，但请补跑 V1_2"
+    fi
+
+  else
+    # 走到这里 = psql 没把预期的结果查回来。可能是没装客户端、连不上、env 漏配口令
+    # 让子 shell 直接断掉（DB_OUT 是空的），也可能是报错是中文、我们认不出来。
+    # 不管是哪种，一律只说「查不了」：不说「连得上」，也绝不说「V1_1 没生效」。
+    # 下面只是尽量把话说具体一点，认不出来就照实说认不出来。
+    if echo "$DB_OUT" | grep -qiE 'command not found|未找到命令|没有那个文件或目录|not found'; then
+      no "这台机器上没装 psql 客户端，数据库这一项查不了 —— 「V1_1 到位没」「V1_2 到位没」这两项也一并没查到"
+      printf '         装上再跑一遍这个脚本：Debian/Ubuntu  apt-get install -y postgresql-client\n'
+      printf '                               CentOS/Rocky   dnf install -y postgresql\n'
+      printf '         ⚠️ 这不代表数据库有问题 —— 脚本压根没连过库。别去动数据库，也别去补跑迁移脚本。\n'
+    elif [ -z "$DB_OUT" ]; then
+      # 一个字都没有：多半是 env 里少了 DB_PASSWORD / DB_USERNAME，
+      # set -u 把子 shell 当场打断，报错走的是脚本自己的 stderr，进不到 DB_OUT 里。
+      no "数据库这一项查不了：psql 一个字都没查回来 —— 「V1_1 到位没」「V1_2 到位没」这两项也一并没查到"
+      printf '         先检查 %s 里 DB_USERNAME / DB_PASSWORD 是不是漏配了，补全再跑一遍。\n' "$ENV_FILE"
+      printf '         ⚠️ 这不代表数据库有问题 —— 脚本没查成任何东西。别去动数据库，也别去补跑迁移脚本。\n'
+    else
+      # 故意不打印 psql 的原始报错：它里面带着数据库地址和账号名
+      # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
+      # 而这份输出经常被贴回 issue 给人看，docs/SECRETS.md 明令内网地址一个字都不许进去。
+      # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次 psql。
+      case "$DB_OUT" in
+        *"password authentication failed"*|*"身份验证失败"*)  DB_HINT='账号或口令不对' ;;
+        *"does not exist"*|*"不存在"*)                        DB_HINT='库名或账号不存在' ;;
+        *"Connection refused"*|*"could not connect"*|*"could not translate"*|*"timeout expired"*|*"no route to host"*|*"拒绝连接"*|*"超时"*)
+                                                              DB_HINT='连不上（地址、端口、防火墙，或者数据库没起来）' ;;
+        *)                                                    DB_HINT='报错认不出来（可能是中文或别的语言）' ;;
+      esac
+      no "数据库这一项查不了：$DB_HINT —— 「V1_1 到位没」「V1_2 到位没」这两项也一并没查到"
+      printf '         原始报错里带着服务器地址和账号，按规矩不打印；要看原文自己 SSH 上去手工跑一次 psql（连接信息在 %s）。\n' "$ENV_FILE"
+      printf '         ⚠️ 这不代表迁移脚本没跑 —— 脚本没连上库，什么都没查到。别去补跑迁移脚本。\n'
     fi
   fi
 fi
