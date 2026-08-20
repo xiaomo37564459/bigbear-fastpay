@@ -357,10 +357,19 @@ ssh root@150.158.99.251 '
   cp /opt/fastpay/fastpay-server-1.0.0.jar.bak-<日期> /opt/fastpay/fastpay-server-1.0.0.jar
   chown fastpay:fastpay /opt/fastpay/fastpay-server-1.0.0.jar
   systemctl restart fastpay-server
+  # 版本标记也要跟着退，换成你退回到的那一版（跟上面第三节第 4 步是同一件事）。
+  # 不改的话，服务器上记着的还是那个刚被你退掉的版本，谁来查「现在线上是哪一版」都会被它骗一次。
+  echo <退回到的版本> > /opt/fastpay/DEPLOYED_VERSION
 '
 ```
 
 前端回退：把上一个版本的 `dist` 重新解压覆盖即可。
+
+回退完照样跑一遍验证脚本，版本号写你**退回到的**那一版 —— 确认真的退干净了：
+
+```bash
+ssh root@150.158.99.251 'bash -s <退回到的版本>' < deploy/verify-release.sh
+```
 
 > ⚠️ **回退时数据库要不要一起退回去？不用，也不要退。**
 > 迁移脚本（比如 `v1.2.0` 带的 `V1_1__admin_account_management_pg.sql`）加的列，**旧版本 jar 完全不受影响**，留着就行。
