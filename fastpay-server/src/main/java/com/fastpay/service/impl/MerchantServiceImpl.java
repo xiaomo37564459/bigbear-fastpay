@@ -1,6 +1,5 @@
 package com.fastpay.service.impl;
 
-import cn.hutool.crypto.SecureUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -18,6 +17,7 @@ import com.fastpay.mapper.PayQrcodeMapper;
 import com.fastpay.mapper.ShopMapper;
 import com.fastpay.service.MerchantService;
 import com.fastpay.util.JwtUtil;
+import com.fastpay.util.PasswordHasher;
 import com.fastpay.util.SignUtil;
 import com.fastpay.vo.DashboardVO;
 import com.fastpay.vo.LoginVO;
@@ -61,9 +61,8 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
             throw new BusinessException("用户名或密码错误");
         }
 
-        // 验证密码
-        String encryptedPassword = SecureUtil.md5(dto.getPassword());
-        if (!encryptedPassword.equals(merchant.getPassword())) {
+        // 验证密码：兼容库里遗留的老格式（无盐 MD5）和新格式（bcrypt）
+        if (!PasswordHasher.matches(dto.getPassword(), merchant.getPassword())) {
             throw new BusinessException("用户名或密码错误");
         }
 
@@ -73,6 +72,12 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
         }
         if (Constants.Status.PENDING.equals(merchant.getStatus())) {
             throw new BusinessException("账号待审核，请联系管理员");
+        }
+
+        // 老格式账号顺手升级成 bcrypt：商户完全无感，一次登录后这条记录就再也不是 MD5 了
+        if (PasswordHasher.isLegacy(merchant.getPassword())) {
+            merchant.setPassword(PasswordHasher.hash(dto.getPassword()));
+            log.info("商户 {} 的密码已从老格式升级为 bcrypt", merchant.getUsername());
         }
 
         // 更新登录信息
@@ -111,7 +116,7 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
         merchant.setMerchantNo(SignUtil.generateMerchantNo());
         merchant.setMerchantName(dto.getMerchantName());
         merchant.setUsername(dto.getUsername());
-        merchant.setPassword(SecureUtil.md5(dto.getPassword()));
+        merchant.setPassword(PasswordHasher.hash(dto.getPassword()));
         merchant.setContactName(dto.getContactName());
         merchant.setContactPhone(dto.getContactPhone());
         merchant.setContactEmail(dto.getContactEmail());
@@ -153,7 +158,7 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
             merchant.setMerchantName(dto.getMerchantName());
         }
         if (StringUtils.hasText(dto.getPassword())) {
-            merchant.setPassword(SecureUtil.md5(dto.getPassword()));
+            merchant.setPassword(PasswordHasher.hash(dto.getPassword()));
         }
         if (StringUtils.hasText(dto.getContactName())) {
             merchant.setContactName(dto.getContactName());
