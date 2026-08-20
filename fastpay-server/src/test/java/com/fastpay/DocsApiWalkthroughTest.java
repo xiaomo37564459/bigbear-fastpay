@@ -393,7 +393,14 @@ class DocsApiWalkthroughTest {
 
         assertThat(data.get("orderNo").asText()).startsWith("FP");
         assertThat(data.get("status").asInt()).isEqualTo(0);
-        assertThat(data.get("payAmount").isNull()).as("文档说没付款时 payAmount 是 null").isTrue();
+        // MTM-170 后：payAmount 下单时就落好（用来解决"两人同价撞单认错人"），未支付时不再是 null。
+        // 第一笔没并发撞车，pay_amount = amount = 10.00；文档 3.3 已同步更新
+        assertThat(data.get("payAmount").isNull())
+                .as("MTM-170 后 payAmount 下单就有值，不再是 null（文档 3.3 已更新）")
+                .isFalse();
+        assertThat(new java.math.BigDecimal(data.get("payAmount").asText()))
+                .as("第一笔无并发撞单时 payAmount 应等于 amount")
+                .isEqualByComparingTo(new java.math.BigDecimal("10.00"));
         assertThat(data.get("payTime").isNull()).as("文档说没付款时 payTime 是 null").isTrue();
 
         String orderNo = data.get("orderNo").asText();

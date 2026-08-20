@@ -37,8 +37,10 @@
     <!-- 数据表格 -->
     <div class="page-card" style="margin-top: 16px">
       <div class="card-body">
-        <el-table :data="tableData" v-loading="loading" stripe class="order-table">
-          <el-table-column label="订单号" :min-width="COL.orderNo">
+        <el-table ref="tableRef" :data="tableData" v-loading="loading" stripe class="order-table">
+          <!-- 订单号列给的是固定宽度：它需要多宽是算得出来的，喂饱就够了，
+               多出来的宽度留给下面的商户列（那一列是全表唯一的弹性列，吃掉所有富余） -->
+          <el-table-column label="订单号" :width="COL.orderNo">
             <template #default="{ row }">
               <div class="order-no" :title="row.orderNo">{{ row.orderNo }}</div>
               <div class="order-no-sub" :title="row.outTradeNo">
@@ -137,11 +139,11 @@
 /**
  * Fast 易支付 - 订单管理页面
  */
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getMerchantList, getOrderPage, getOrderByNo, confirmOrder, closeOrder, resendNotify } from '@/api'
 import OrderDetailDialog from './OrderDetailDialog.vue'
-import { ORDER_COLUMN_WIDTHS as COL } from './columns'
+import { resolveColumnWidths, TABLE_WIDTH_AT_1280 } from './columns'
 import {
   getStatusText,
   getStatusType,
@@ -149,6 +151,16 @@ import {
   getNotifyStatusType,
   splitDateTime as splitTime
 } from '@/utils/orderDetail'
+
+// 列宽：跟着表格实际能用的宽度走。窗口拖宽了、侧边栏收起来了，多出来的宽度
+// 按 columns.js 里定好的顺序分配（先补商户名、再补订单号副行），而不是让
+// Element Plus 按 min-width 比例平摊——平摊的结果是订单号列右边空一片、商户名还在截断。
+// 表格根元素永远是容器的 100% 宽（横向溢出是它内部滚的），所以量它不会和列宽互相牵扯。
+const tableRef = ref()
+const tableWidth = ref(TABLE_WIDTH_AT_1280)
+const COL = computed(() => resolveColumnWidths(tableWidth.value))
+
+let tableResizeObserver = null
 
 // 商户列表
 const merchants = ref([])
@@ -247,6 +259,22 @@ const handleResendNotify = async (record) => {
 onMounted(() => {
   loadMerchants()
   loadData()
+
+  // jsdom（单元测试环境）里的 ResizeObserver 是个空壳，量不到宽度，
+  // 这时候就一直用 1280 的基准宽，不影响其它断言
+  const tableEl = tableRef.value?.$el
+  if (tableEl && typeof ResizeObserver !== 'undefined') {
+    tableResizeObserver = new ResizeObserver(([entry]) => {
+      const width = entry?.contentRect?.width
+      if (width > 0) tableWidth.value = width
+    })
+    tableResizeObserver.observe(tableEl)
+  }
+})
+
+onBeforeUnmount(() => {
+  tableResizeObserver?.disconnect()
+  tableResizeObserver = null
 })
 </script>
 
