@@ -220,14 +220,14 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 | `v1.3.0` | **无** | 这一版都是文档和前端改动，不动表结构 |
 | `v1.4.0` | `V1_2__password_hash_bcrypt_pg.sql` | `fp_admin.password`、`fp_merchant.password` 从 64 放宽到 255 字符，容纳 bcrypt |
 | `v1.5.0` | **无** | 这一版是 CI 流程、文档和 `.gitignore` 改动，不动表结构（可部署产物与 `v1.4.0` 完全一致，当时未重新部署） |
-| **下一版（还没打 tag）** | `V1_3__order_notify_result_pg.sql`、`V1_4__pay_amount_uniqueness_pg.sql` | 订单回调结果落库（MTM-157）＋ 两人同价撞单认错人（MTM-170）。**两个脚本都要跑，按 `V1_3` → `V1_4` 的顺序。** 线上现在停在 `V1_2`，这两个都没跑过。`V1_4` 会改动已有订单数据，跑之前务必先做完整库备份 |
+| **下一版（还没打 tag）** | `V1_3__order_notify_result_pg.sql`、`V1_4__pay_amount_uniqueness_pg.sql`、`V1_5__widen_url_columns_pg.sql` | 订单回调结果落库（MTM-157）＋ 两人同价撞单认错人（MTM-170）＋ 订单/商户 URL 列 255→2000 加宽（MTM-209）。**三个脚本都要跑，按 `V1_3` → `V1_4` → `V1_5` 的顺序。** 线上现在停在 `V1_2`，`V1_3` / `V1_4` 都没跑过。`V1_5` 加宽的四个字段线上已被手工加宽（2026-08-19，MTM-151 那晚的应急 `widen-url-cols.sql`），所以生产上跑 `V1_5` 是空操作、只是把手工那一步固化进正式脚本；但**只要有非生产环境（老 dev/test 库、灾备快照）曾经从旧 init 建起来又没跟着手工加宽，`V1_5` 就必须跑，否则一走 sub2api 那类带长 URL 的支付流程就会报 `value too long for type character varying(255)`**。`V1_4` 会改动已有订单数据，跑之前务必先做完整库备份 |
 
 几条配套说明：
 
 - **表里写「无」的版本**：第三节 0 步骤里「传本次要跑的迁移脚本」「跑迁移」那两段跳过；**0 步骤开头那段备份（备份库 + 备份 jar + 备份前端）照做**，做完直接跳到第 1 步传 jar。
 - **本地或老装机用 MySQL 的**：把文件名里的 `_pg` 换成 `_mysql`，两个文件内容等价，只是数据库方言不同。
 - **跨版本升级**（比如线上还停在 `v1.2.0`，这次直接发 `v1.4.0`）：把中间每一版「新增」那一列的脚本**按版本从小到大依次跑一遍**。所有脚本重复跑都不会出问题（用了 `IF NOT EXISTS`），已经跑过的再跑一次不会中断部署。
-  - `V1_2` / `V1_3` 只改表结构（放宽字段宽度、加列），**不动任何已有数据**；`V1_1` 只多一句把新加的 `token_version` 列的空值补成 0（`UPDATE ... WHERE token_version IS NULL`，重复跑也没事）。
+  - `V1_2` / `V1_3` / `V1_5` 只改表结构（放宽字段宽度、加列），**不动任何已有数据**；`V1_1` 只多一句把新加的 `token_version` 列的空值补成 0（`UPDATE ... WHERE token_version IS NULL`，重复跑也没事）。
   - 🔴 **`V1_4` 是例外，它会改动已有的订单数据**（补 `pay_amount`、把重复的老未支付订单关掉）。**只要这次要跑 `V1_4`，0 步骤那段整库备份就必须真的做完，不能因为「前面几版都不动数据」而跳过。** 细节见下面 `V1_4` 那一段。
 - 跑法就是第三节 0 步骤里「传本次要跑的迁移脚本」「跑迁移」那两段命令，把 `scp` 和 `psql` 里的文件名换成本次要跑的即可，其余照抄。
 
@@ -283,7 +283,24 @@ curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merch
 >
 > 💡 **漏跑 `V1_4` 会怎样？** 后果和 `V1_3` 完全不同，而且更贵：**撞单那个赔钱 bug 原样还在**（两个人付一模一样的金额，系统会认错人、把钱记到别人的订单上）；同时新版后端起来后要读写 `fp_pending_pay_amount` 和 `fp_unmatched_notify` 这两张表，表不存在会直接报错。**这个脚本绝对不能省。**
 
-**迁移脚本的执行顺序是 `V1_1` → `V1_2` → `V1_3` → `V1_4`。** 库落后好几版时按顺序补跑。四个脚本重复跑都不会出事（`V1_4` 里的两条 `UPDATE` 都带 `IS NULL` / `NOT IN (MIN(id))` 条件，第二遍跑就匹配不到任何行了；`INSERT` 也有 `ON CONFLICT DO NOTHING` 兜底）。
+**「订单/商户 URL 列 255→2000 加宽」版本需要执行的迁移脚本清单**（`V1_5`）：
+
+| 数据库 | 脚本 | 做了什么 |
+| --- | --- | --- |
+| PostgreSQL（生产） | `db/migration/V1_5__widen_url_columns_pg.sql` | `fp_pay_order.notify_url` / `fp_pay_order.return_url` / `fp_merchant.notify_url` / `fp_merchant.return_url` 四列从 `VARCHAR(255)` 加宽到 `VARCHAR(2000)`，容纳 sub2api 那种末尾带 JWT 的长回跳地址（实测最长 348 字符） |
+| MySQL（本地/老装机） | `db/migration/V1_5__widen_url_columns_mysql.sql` | 同上，MySQL 方言 |
+
+步骤和前面几个完全一样：把 `scp` 和 `psql` 命令里的文件名换成 `V1_5__widen_url_columns_pg.sql`，其余照抄。
+
+下面三条都是 `V1_5` 的注意事项：
+
+> 💡 **PG 里 `VARCHAR(n)` → `VARCHAR(m)`（m > n）只改元数据，不重写表、不锁行**，即使表里已有几十万行订单也是毫秒级完成。Java 侧的 `PayOrder.notifyUrl` / `PayOrder.returnUrl` 是不带 length 注解的 `String`，MyBatis-Plus 也不做客户端长度限制，所以 `V1_5` **不用改代码、不用重编、不用重启后端**，先跑或后跑都行（建议仍按老规矩「先跑脚本、再重启后端」保持步调一致）。
+>
+> 💡 **线上早就手工加宽过了，`V1_5` 只是把手工那一步固化。** 2026-08-19 00:37 生产库已通过 `/root/fastpay-ops/widen-url-cols.sql` 把这四列加到 2000，`init-pg.sql` / `init.sql` 也同步改了 —— 但**没有沉淀成正式迁移脚本**。所以生产上跑 `V1_5` 是空操作（对已经是 2000 的列 `ALTER ... TYPE VARCHAR(2000)` 是空操作，安全无副作用），但仓库里从旧 init 建起来又没跟着手工加宽的其它环境（历史 dev/test 库、灾备快照、以后新拉起来的临时环境）**必须跑** `V1_5` 才能避免再踩坑。
+>
+> 💡 **漏跑 `V1_5` 会怎样？** 线上因为已经手工加宽了，所以漏跑不会出事；**但任何还没加宽的老环境**，只要走一次 sub2api 那类下单接口（`/fastpay-server/mapi.php`），就会立刻 `value too long for type character varying(255)`、订单一条都存不进来，用户看到"支付通道错误"。所以别省。
+
+**迁移脚本的执行顺序是 `V1_1` → `V1_2` → `V1_3` → `V1_4` → `V1_5`。** 库落后好几版时按顺序补跑。五个脚本重复跑都不会出事（`V1_4` 里的两条 `UPDATE` 都带 `IS NULL` / `NOT IN (MIN(id))` 条件，第二遍跑就匹配不到任何行了；`INSERT` 也有 `ON CONFLICT DO NOTHING` 兜底；`V1_5` 是纯列宽变更，对已经是 2000 的列再跑是空操作）。
 
 > 📌 **别把「重复跑安全」当成「不动数据」。** `V1_4` 两样都占：它**第一次跑就是会改订单数据**，但重复跑不会再改第二次。备份该做还得做。
 
