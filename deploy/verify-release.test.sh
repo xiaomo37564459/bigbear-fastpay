@@ -31,9 +31,10 @@ cut_block() { # cut_block <起始行正则> <结束行正则>
 MASK_SRC=$(cut_block '^# =* 遮蔽（mask）开始' '^# =* 遮蔽（mask）结束')
 DB_SRC=$(cut_block '^  if \[ "\$DB_OUT" = "PARSE_FAIL" \]; then$' '^  fi$')
 LOG_SRC=$(cut_block '^if \[ -r "\$LOG_FILE" \]; then$' '^fi$')
+LOCK_SRC=$(cut_block '^# =* 操作锁检查（lock）开始' '^# =* 操作锁检查（lock）结束')
 CNT_SRC=$(grep -E '^(ok|no|warn)\(\)' "$SRC")
 
-for pair in "遮蔽段:$MASK_SRC" "数据库段:$DB_SRC" "日志段:$LOG_SRC" "计数函数:$CNT_SRC"; do
+for pair in "遮蔽段:$MASK_SRC" "数据库段:$DB_SRC" "日志段:$LOG_SRC" "操作锁段:$LOCK_SRC" "计数函数:$CNT_SRC"; do
   [ -n "${pair#*:}" ] || { echo "抠不到「${pair%%:*}」—— verify-release.sh 的结构变了，先修这个测试"; exit 2; }
 done
 
@@ -173,6 +174,32 @@ has   "告诉人去装客户端"                   'postgresql-client'        "$
 has   "说清迁移那几项这次也没查"           '这次也没查'               "$O"
 
 echo
+echo "===== 六之二、数据库：一个字都没查回来时，绝不许把人指去动数据库 ====="
+# MTM-204 修好的就是这个方向指反的坑，MTM-218 补上守门的这一段。
+# 出事的场景：env 里漏配了 DB_PASSWORD，子 shell 被 set -u 当场打断，DB_OUT 是空的。
+# 老写法的判据是「没看见我认识的报错就算连上了」，于是打出「数据库连得上」，
+# 紧接着又报「V1_1 没生效 —— 补跑 V1_1 迁移脚本」。库本身好好的，人却被指去改生产库：
+# 方向正好指反，而且指向一个会写库的动作。
+# 判据改成「必须真把 username= 那一行查回来才算连上」之后，这个坑没了，
+# 但一直没有测试守着 —— 谁把判据改回老写法都不会有人拦。下面这几条就是那个拦路的。
+O=$(try_db '')
+has   "判 FAIL，而且判的就是「查不了」"     'FAIL  数据库这一项查不了' "$O"
+hasnt "一条都不许判通过"                   '✅ PASS'                  "$O"
+hasnt "绝不能说「数据库连得上」"           '数据库连得上'             "$O"
+hasnt "绝不能说「V1_1 没生效」"            'V1_1 没生效'              "$O"
+hasnt "绝不能把人指去补跑迁移脚本"         '补跑 V1_1 迁移脚本'       "$O"
+has   "改指去查 env 里漏配的账号口令"       'DB_USERNAME'              "$O"
+has   "说清迁移那两项这次也没查"            '这次也没查'               "$O"
+
+# 同一个坑的另一副面孔：机器是中文的，psql 没装时报的是「未找到命令」。
+# 老写法只认英文 command not found，认不出来就当没事 —— 照样谎报「连得上」。
+O=$(try_db 'bash: psql：未找到命令')
+has   "中文报错也判 FAIL"                  'FAIL  这台机器上没装 psql 客户端' "$O"
+hasnt "中文机器上也不许说「数据库连得上」" '数据库连得上'             "$O"
+hasnt "中文机器上也不许说「V1_1 没生效」"  'V1_1 没生效'              "$O"
+has   "认得出是没装客户端"                 'postgresql-client'        "$O"
+
+echo
 echo "===== 七、数据库：连不上的原因分类，且提示里不带地址账号 ====="
 reason() { # reason <DB_OUT> <期望分类> <不许出现的串...>
   local out exp; out=$(try_db "$1"); exp="$2"; shift 2
@@ -228,7 +255,71 @@ O=$(eval "$LOG_SRC" 2>&1)
 has   "日志干净时报没有 ERROR"             '没有 ERROR'               "$O"
 
 echo
-echo "===== 十、脚本本身 ====="
+echo "===== 十、操作锁段：有别人在同时动这台机器，必须判 FAIL ====="
+# 这一段最要命的错法是「该判 FAIL 的判成了 PASS」—— 那等于把并发上线放行了，
+# 而放行是安安静静的，没有任何报错。所以每一条都同时断言「话说对了」和「计数对了」。
+# 背景见 MTM-210：2026-08-20 两路人同时动生产，服务被不相干的人重启了一次。
+LOCK_OPS="$TMPDIR_T/ops"
+mkdir -p "$LOCK_OPS/prod-deploy.lock"
+OPS_DIR="$LOCK_OPS"
+LOCK_INFO="$LOCK_OPS/prod-deploy.lock/holder"
+
+# 造一把「谁占着」的锁；不传参数就是没人占
+set_lock() {
+  if [ -z "${1:-}" ]; then rm -f "$LOCK_INFO"
+  else printf 'TOKEN=%s\nWHO=%s\nSTART_TS=1\n' "$1" "$2" > "$LOCK_INFO"; fi
+}
+# 假装锁脚本装好了 / 没装
+install_lock_sh()   { printf '#!/bin/sh\nexit 0\n' > "$LOCK_OPS/prod-lock.sh"; chmod 755 "$LOCK_OPS/prod-lock.sh"; }
+uninstall_lock_sh() { rm -f "$LOCK_OPS/prod-lock.sh"; }
+
+run_lock() { # run_lock <传给脚本的令牌>
+  LOCK_TOKEN="${1:-}"
+  PASS_N=0; FAIL_N=0; WARN_N=0
+  eval "$LOCK_SRC" 2>&1
+  # 计数必须在这里打出来：调用方是 O=$(run_lock ...)，那是个子 shell，
+  # PASS_N/FAIL_N 加完就随子 shell 一起没了，外面读到的永远是 0。
+  # 光看输出里有没有「❌ FAIL」不够 —— 那验不出「一次判了两条」这种错。
+  printf 'COUNTS:PASS=%d,FAIL=%d,WARN=%d\n' "$PASS_N" "$FAIL_N" "$WARN_N"
+}
+
+install_lock_sh
+
+set_lock MTM-157 "另一路"
+O=$(run_lock MTM-210)
+has   "锁在别人手上：说清楚了是谁"          'MTM-157'                  "$O"
+has   "锁在别人手上：判 FAIL"                '❌ FAIL'                  "$O"
+has   "锁在别人手上：只判了一条 FAIL"        'COUNTS:PASS=0,FAIL=1'     "$O"
+
+set_lock MTM-210 "梁运｜运维"
+O=$(run_lock MTM-210)
+has   "锁在自己手上：判 PASS"                '✅ PASS'                  "$O"
+has   "锁在自己手上：提醒验完要放开"          'release MTM-210'          "$O"
+has   "锁在自己手上：只判了一条 PASS"        'COUNTS:PASS=1,FAIL=0'     "$O"
+
+set_lock ''
+O=$(run_lock MTM-210)
+has   "自称持锁但根本没人占锁：判 FAIL"      '❌ FAIL'                  "$O"
+has   "自称持锁但没人占锁：只判了一条 FAIL"  'COUNTS:PASS=0,FAIL=1'     "$O"
+
+set_lock MTM-157 "另一路"
+O=$(run_lock '')
+has   "没传令牌但有人在动：至少提醒一句"      '⚠️'                       "$O"
+hasnt "没传令牌：不判 FAIL（老写法要照样能跑）" '❌ FAIL'                "$O"
+
+set_lock ''
+O=$(run_lock '')
+has   "没传令牌且没人占锁：判 PASS"          '✅ PASS'                  "$O"
+
+uninstall_lock_sh
+set_lock ''
+O=$(run_lock MTM-210)
+has   "锁脚本没装：提醒去装"                 '还没装操作锁'              "$O"
+hasnt "锁脚本没装：不冒充成 PASS"            '✅ PASS'                  "$O"
+install_lock_sh
+
+echo
+echo "===== 十一、脚本本身 ====="
 T=$((T+1))
 if bash -n "$SRC" 2>/dev/null; then printf '  ✅ bash -n 语法检查通过\n'
 else F=$((F+1)); printf '  ❌ bash -n 语法检查没过\n'; fi
