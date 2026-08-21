@@ -668,6 +668,44 @@ class DocsApiWalkthroughTest {
         }
     }
 
+    /**
+     * MTM-212：/mapi.php 之前只收 POST，对接方用 GET 探测（curl 不带 -X POST 默认就是 GET）
+     * 会撞上「请求方式不支持」，被全局兜底翻译成 {code:500, message:"系统繁忙，请稍后重试"}，
+     * 对接方还以为是平台挂了。现在 /mapi.php 和 /submit.php、/api.php 一样收 GET+POST，
+     * 参数缺了直接说缺哪个，和 /api.php?act=order 口径一致。
+     */
+    @Test
+    @Order(13)
+    void epayMapi_acceptsGetAndNamesTheMissingParamLikeApiPhp() throws Exception {
+        // 什么都不传（对接方最常犯的错：拿空参数探一下接口），必须明确说缺 pid
+        JsonNode empty = json(getFormPlain("/mapi.php", new LinkedHashMap<>()));
+        assertThat(empty.get("code").asInt()).as("空参探测应返回业务错误码：" + empty).isEqualTo(-1);
+        assertThat(empty.get("msg").asText()).isEqualTo("缺少商户号 pid");
+
+        // POST 空参也一样
+        JsonNode emptyPost = json(postForm("/mapi.php", new LinkedHashMap<>()));
+        assertThat(emptyPost.get("code").asInt()).isEqualTo(-1);
+        assertThat(emptyPost.get("msg").asText()).isEqualTo("缺少商户号 pid");
+
+        // 商户号、签名都对，但少了 out_trade_no —— 要指名道姓说缺哪个
+        Map<String, String> base = new LinkedHashMap<>();
+        base.put("pid", merchantNo);
+        base.put("type", "wxpay");
+        base.put("money", "15.00");
+        base.put("name", "测试商品");
+        base.put("sign_type", "MD5");
+        JsonNode missing = json(getFormPlain("/mapi.php", withSign(base, epaySign(base, apiSecret))));
+        assertThat(missing.get("code").asInt()).isEqualTo(-1);
+        assertThat(missing.get("msg").asText()).isEqualTo("缺少 out_trade_no");
+
+        // GET 带全参数也能正常下单，和 POST 走同一套处理
+        Map<String, String> full = new LinkedHashMap<>(base);
+        full.put("out_trade_no", "DOC_EPAY_GET01");
+        JsonNode created = json(getFormPlain("/mapi.php", withSign(full, epaySign(full, apiSecret))));
+        assertThat(created.get("code").asInt()).as("GET 下单也应成功：" + created).isEqualTo(1);
+        assertThat(created.get("trade_no").asText()).startsWith("FP");
+    }
+
     // ================================================================
     // 文档第八章的签名算法，这里按文档文字重新实现一遍（不引用项目的工具类）
     // ================================================================
@@ -743,6 +781,15 @@ class DocsApiWalkthroughTest {
 
     private MvcResult getForm(String url, Map<String, String> params, String act) throws Exception {
         MockHttpServletRequestBuilder request = get(url).param("act", act);
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            request = request.param(e.getKey(), e.getValue());
+        }
+        return mockMvc.perform(request).andReturn();
+    }
+
+    /** 纯 GET，不带 act（/submit.php、/mapi.php 这类没有 act 字段的入口用） */
+    private MvcResult getFormPlain(String url, Map<String, String> params) throws Exception {
+        MockHttpServletRequestBuilder request = get(url);
         for (Map.Entry<String, String> e : params.entrySet()) {
             request = request.param(e.getKey(), e.getValue());
         }

@@ -577,11 +577,13 @@ setInterval(() => ws.readyState === WebSocket.OPEN && ws.send('ping'), 30000);
 
 ---
 
-### 4.1 `POST /mapi.php` —— 后端下单，返回 JSON
+### 4.1 `GET/POST /mapi.php` —— 后端下单，返回 JSON
 
 **干什么用的**：对方系统的后端调这个接口下单，拿到收款码地址。
 
 **Content-Type**：`application/x-www-form-urlencoded`
+
+> GET 和 POST 都支持，参数和签名完全一样（用 GET 时参数放查询串里）。之前只收 POST 的时候，对方拿 GET 一探就只会看到一句「系统繁忙」，现在参数缺了会直接说缺哪个。
 
 **请求参数**
 
@@ -1602,7 +1604,7 @@ location /fastpay-server/ws {
 | `/api/pay/result/{orderNo}` | GET | 否 | 否 | 支付结果页数据 |
 | `/ws/pay/{merchantNo}/{outTradeNo}` | WS | 否 | 否 | 支付结果实时推送 |
 | `/submit.php` | GET/POST | 易支付 | 否 | 易支付页面跳转下单 |
-| `/mapi.php` | POST | 易支付 | 否 | 易支付 API 下单 |
+| `/mapi.php` | GET/POST | 易支付 | 否 | 易支付 API 下单 |
 | `/api.php?act=order` | GET/POST | 易支付 | 否 | 易支付查订单 |
 | `/api.php?act=refund` | GET/POST | —— | 否 | 退款占位，本期返回未实现 |
 | `/api/notify/callback` | POST | HmacSHA256 | 否 | 监听软件上报到账 |
