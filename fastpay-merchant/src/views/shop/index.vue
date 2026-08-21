@@ -500,7 +500,7 @@
 /**
  * Fast 易支付 - 店铺管理（整合二维码和订单）
  */
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   getShopPage, createShop, updateShop, updateShopStatus,
@@ -636,6 +636,9 @@ const loadShops = async () => {
     console.error('加载店铺列表失败:', error)
   }
   loading.value = false
+  // 这一页可能正好装满列表框（MTM-222）：装得下就去把下一批补齐，
+  // 不然商户永远够不着第 3 家以后的店
+  autoFillShops()
 }
 
 // 加载更多店铺
@@ -654,6 +657,31 @@ const loadMoreShops = async () => {
     shopParams.current--
   }
   shopLoadingMore.value = false
+}
+
+/*
+  列表框装得下时自动补齐下一批（MTM-222）
+
+  电脑上这个框高 240px，两张卡片一共约 212px —— 装得下就不出现滚动条，
+  靠「拉到底」触发的滚动加载永远不会发生，第 3 家店起就再也点不到了。
+  所以每次列表刷新后量一下：框还在裁内容（电脑端）、而且没装满，就主动去要下一批，
+  直到装不下（交给用户拉滚动条）或者没有更多为止。
+
+  手机上不归这段管：MTM-216 之后手机没有这个内层框（overflow 是 visible），
+  下一批由「加载更多店铺」按钮负责。
+*/
+const autoFillShops = async () => {
+  await nextTick()
+  const el = shopListRef.value
+  if (!el || loading.value || shopLoadingMore.value || !shopHasMore.value) return
+  const overflowY = getComputedStyle(el).overflowY
+  const isClippedBox = overflowY === 'auto' || overflowY === 'scroll'
+  if (!isClippedBox || el.scrollHeight > el.clientHeight) return
+  const before = shopList.value.length
+  await loadMoreShops()
+  // 后台没再给新数据就见好就收，别原地打转
+  if (shopList.value.length === before) return
+  await autoFillShops()
 }
 
 // 滚动加载

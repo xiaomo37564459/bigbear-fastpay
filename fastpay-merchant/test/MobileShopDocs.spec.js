@@ -277,6 +277,90 @@ describe('店铺管理：一页装不下时，手机上必须能看到全部店�
   })
 })
 
+/**
+ * 店铺管理：电脑上列表框装得下时，自动去要下一批（MTM-222）
+ *
+ * 电脑端这个框高 240px，两张横排卡片约 212px —— 装得下就不出滚动条，
+ * 靠「拉到底」触发的加载永远不发生，第 3 家店起够不着。
+ * 修法：每次列表刷新后量一下框，装得下（且框确实在裁内容）就主动补齐下一批。
+ *
+ * jsdom 不做布局：scrollHeight/clientHeight 永远是 0、样式表也不生效，
+ * 所以这里把电脑端的真实几何和 overflow 都手动摆出来再测。
+ */
+describe('店铺管理：电脑上列表框装得下时，自动去要下一批（MTM-222）', () => {
+  /**
+   * 把电脑端的真实几何摆出来：框会裁内容（overflow-y: auto）、
+   * 两张卡片 ≈ 212px 正好装进 240px 的框，3 张起就装不下了。
+   *
+   * 挂载那一刻列表还是空的（先走「暂无店铺」分支），拿不到框这个元素，
+   * 所以只能在 Element.prototype 上按类名临时接管这两个尺寸，测完原样还回去。
+   */
+  const stubDesktopBox = () => {
+    const proto = Element.prototype
+    const origClient = Object.getOwnPropertyDescriptor(proto, 'clientHeight')
+    const origScroll = Object.getOwnPropertyDescriptor(proto, 'scrollHeight')
+    const isBox = (el) => Boolean(el && el.classList && el.classList.contains('shop-list-wrapper'))
+    Object.defineProperty(proto, 'clientHeight', {
+      configurable: true,
+      get() { return isBox(this) ? 240 : origClient.get.call(this) }
+    })
+    Object.defineProperty(proto, 'scrollHeight', {
+      configurable: true,
+      get() {
+        if (!isBox(this)) return origScroll.get.call(this)
+        // 2 张卡片装得下；3 张起溢出
+        return this.querySelectorAll('.shop-item').length >= 3 ? 436 : 212
+      }
+    })
+    const real = window.getComputedStyle.bind(window)
+    const gcsSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el) => {
+      const style = real(el)
+      if (!isBox(el)) return style
+      return new Proxy(style, {
+        get: (target, prop) => (prop === 'overflowY' ? 'auto' : Reflect.get(target, prop))
+      })
+    })
+    return () => {
+      gcsSpy.mockRestore()
+      Object.defineProperty(proto, 'clientHeight', origClient)
+      Object.defineProperty(proto, 'scrollHeight', origScroll)
+    }
+  }
+
+  it('5 家店：不用拉滚动条，第 3、4 家自己出现；拉到底第 5 家也够得着', async () => {
+    db.total = 5
+    const restore = stubDesktopBox()
+    try {
+      const wrapper = await mountShop()
+
+      // 首页 2 家装得下 → 自动补到第 2 页共 4 家；这时框装不下了，停下等用户拉
+      expect(wrapper.findAll('.shop-item')).toHaveLength(4)
+      const names = wrapper.findAll('.shop-name').map(n => n.text())
+      expect(names).toContain('大熊生鲜社区店')
+      expect(names).toContain('大熊文具校园店')
+
+      // 第 5 家：框已溢出，拉到底走原来的滚动加载 —— 全部 5 家可达
+      const box = wrapper.find('.shop-list-wrapper').element
+      Object.defineProperty(box, 'scrollTop', { value: 380, writable: true, configurable: true })
+      await wrapper.find('.shop-list-wrapper').trigger('scroll')
+      await flushPromises()
+      expect(wrapper.findAll('.shop-item')).toHaveLength(5)
+      expect(wrapper.findAll('.shop-name').map(n => n.text())).toContain('蹦蹦超市')
+    } finally {
+      restore()
+    }
+  })
+
+  it('没有内层滚动框的布局（手机那套）不吃这个自动补齐，「加载更多」按钮照旧', async () => {
+    db.total = 5
+    // jsdom 里样式表不生效，overflow 是初始值 visible —— 正好等于手机上「没有框」的样子
+    const wrapper = await mountShop()
+    expect(wrapper.findAll('.shop-item')).toHaveLength(2)
+    expect(wrapper.find('.load-more-btn').exists()).toBe(true)
+    expect(wrapper.find('.load-more-btn').text()).toContain('加载更多店铺')
+  })
+})
+
 describe('开发文档（公开页）：手机上不许左右横着推', () => {
   it('左右两栏在手机上都占满整屏（xs=24），不再是写死的 5 : 19', async () => {
     const PublicDocs = (await import('@/views/docs/public.vue')).default
