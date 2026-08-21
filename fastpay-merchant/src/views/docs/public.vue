@@ -36,8 +36,8 @@
     <!-- 文档内容 -->
     <div class="docs-container">
       <el-row :gutter="24">
-        <!-- 左侧导航 -->
-        <el-col :span="5">
+        <!-- 左侧导航（窄屏下自动变成顶部横向滚动的一条，见 style 里的媒体查询） -->
+        <el-col :xs="24" :sm="24" :md="5">
           <div class="docs-nav">
             <el-menu :default-active="activeSection" @select="scrollToSection">
               <el-menu-item index="intro">产品介绍</el-menu-item>
@@ -55,7 +55,7 @@
         </el-col>
 
         <!-- 右侧内容 -->
-        <el-col :span="19">
+        <el-col :xs="24" :sm="24" :md="19">
           <!-- 产品介绍 -->
           <section id="intro" class="doc-section">
             <h2>产品介绍</h2>
@@ -1404,6 +1404,136 @@ const errorCodes = [
       word-break: break-all;
       white-space: normal;
     }
+  }
+}
+
+/* ============================================================
+   手机 / 平板：这一页原来能左右横着推（MTM-216）
+
+   原因是左右两栏写死了 5 : 19，手机上左边目录只剩 70 来像素，
+   九个目录名（「WebSocket监听」最长）根本塞不进去，直接顶出屏幕；
+   右边正文也只剩 290px，接口地址和表格跟着往外撑。
+   390px 的屏幕上整页实际有 518px 宽，手指一划就能把页面推走。
+
+   改法：窄屏改成一栏，目录挪到顶上变成横着滑的一条，正文占满整屏。
+   ≥992px 一条规则都不生效，电脑端样子原封不动。
+   ============================================================ */
+@media (max-width: 991px) {
+  /* 目录不再吸在左边，改成顶上横着滑的一条 */
+  .docs-nav {
+    position: static;
+    margin-bottom: 12px;
+    padding: 4px;
+  }
+
+  /* 这几条必须写成不嵌套的形式，嵌套在 .docs-nav 里面 :deep() 不会展开 */
+  .docs-nav :deep(.el-menu) {
+    display: flex;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: none;
+  }
+
+  .docs-nav :deep(.el-menu-item) {
+    flex: 0 0 auto;
+    height: 38px;
+    line-height: 38px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* 顶栏：品牌名不许被拆行，右上角两个按钮优先保命 */
+  .header-container {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .logo {
+    min-width: 0;
+  }
+
+  .logo-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .logo-icon svg {
+    width: 30px;
+    height: 30px;
+  }
+
+  .logo-text {
+    margin-left: 8px;
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 这一页本来就叫「开发文档」，角标属于可省信息，先让位 */
+  .logo-badge {
+    display: none;
+  }
+
+  .header-actions {
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .docs-container {
+    padding: 76px 12px 32px;
+  }
+
+  /*
+    el-row 带 gutter 会给自己加一对负外边距（各 -12px），一栏排布时
+    它就成了多顶出来的一截，屏幕再窄一点就能把整页推走。直接归零。
+  */
+  .docs-container > :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  .docs-container > :deep(.el-row > .el-col) {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .doc-section {
+    padding: 16px 14px;
+  }
+
+  .doc-section h2 {
+    font-size: 18px;
+  }
+
+  /* 接口地址那一条：长地址该折就折，别顶开卡片 */
+  .api-endpoint {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .api-endpoint code {
+    overflow-wrap: anywhere;
+  }
+
+  .endpoint-desc {
+    margin-left: 0;
+  }
+
+  .code-block {
+    padding: 12px;
+  }
+
+  .code-block pre {
+    font-size: 12px;
+  }
+
+  /* 表格自己横着滑就行，不许顶开外面的容器 */
+  .doc-section :deep(.el-table) {
+    max-width: 100%;
   }
 }
 </style>
