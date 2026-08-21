@@ -62,8 +62,9 @@
           </div>
           <div class="card-body">
             <p>FAST 易支付提供简单易用的支付接口，支持两种接入方式：</p>
+            <!-- 手机上（xs）两张卡上下排，横着并排的话每张只剩一半宽，文字被压成三四行 -->
             <el-row :gutter="16" style="margin-top: 16px;">
-              <el-col :span="12">
+              <el-col :xs="24" :span="12">
                 <div class="method-card">
                   <div class="method-icon">
                     <el-icon :size="24"><Link /></el-icon>
@@ -72,7 +73,7 @@
                   <p>使用 form 表单提交跳转到支付页面，适合 Web 网站接入</p>
                 </div>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :span="12">
                 <div class="method-card">
                   <div class="method-icon">
                     <el-icon :size="24"><Connection /></el-icon>
@@ -1593,6 +1594,35 @@ print(response.json())`
     pre {
       font-size: 12px;
     }
+  }
+}
+
+/*
+  手机：整页不许左右横着推（MTM-216）
+
+  最外层那个 el-row 带 gutter，会给自己加一对负的左右外边距（各 -8px），
+  正常情况下被 el-col 的内边距抵消掉；但窄屏只剩一栏，这 16px 就变成
+  多顶出来的一截，屏幕再窄一点就能把整页推走。一栏排布用不着 gutter，直接归零。
+*/
+@media (max-width: 767px) {
+  .docs-page > :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  .docs-page > :deep(.el-row > .el-col) {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  /* 长接口地址（比如 WebSocket 那条）该折行就折行，别把页面拽宽 */
+  .api-info code {
+    overflow-wrap: anywhere;
+  }
+
+  /* 表格自己横着滑就行，不许顶开外面的容器 */
+  .doc-section :deep(.el-table) {
+    max-width: 100%;
   }
 }
 </style>

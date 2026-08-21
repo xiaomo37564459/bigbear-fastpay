@@ -65,7 +65,25 @@
             <el-icon class="is-loading"><Loading /></el-icon>
             加载中...
           </div>
-          <div v-else-if="!shopHasMore && shopList.length > 0" class="load-more-tip no-more">
+          <!--
+            手机上的「加载更多」按钮（MTM-216 返工）
+
+            电脑上下一批店铺是靠「列表框装不下、用户在框里往下拉」触发的。手机上这一招
+            不能用：卡片改成上下排之后列表框不再溢出，拉不动就永远要不到下一批，商户
+            只能看到前 2 家店。手机上干脆不要这个框中框（手指本来也分不清在滑哪一层），
+            改成一个看得见、点得着的按钮。
+
+            这个按钮在电脑上是 display:none（见 style 里的媒体查询），电脑端一个像素都不动。
+          -->
+          <button
+            v-else-if="!loading && shopHasMore"
+            type="button"
+            class="load-more-btn"
+            @click="loadMoreShops"
+          >
+            加载更多店铺
+          </button>
+          <div v-else-if="shopList.length > 0" class="load-more-tip no-more">
             没有更多了
           </div>
         </div>
@@ -927,6 +945,14 @@ onMounted(() => {
   color: #c0c4cc;
 }
 
+/*
+  「加载更多店铺」按钮只在手机上出现（见文件末尾的媒体查询）。
+  电脑上是 display:none —— 不占位、不渲染，电脑端的样子一点不受影响。
+*/
+.load-more-btn {
+  display: none;
+}
+
 .shop-item {
   display: flex;
   align-items: center;
@@ -1253,6 +1279,160 @@ onMounted(() => {
   color: #606266;
 }
 
+/* ============================================================
+   手机端排版（MTM-216）
+
+   这一整段只在 ≤767px 生效，电脑端（≥1024px）一条都不会命中，
+   所以电脑上的样子原封不动。
+
+   原来店铺卡片是「名字 | 两个数 | 两个按钮」横着挤在一行，
+   390px 的手机上三块抢宽度，结果是：
+     - 「二维码」被压到 12px 宽，一个字一行竖着排
+     - 「启用」被劈成两行
+     - 第二张卡片被外层 240px 的高度拦腰截断
+   改成上下排：名字一行、编号一行、两个数并排一行、按钮一行。
+   ============================================================ */
+@media (max-width: 767px) {
+  /*
+    手机上不要「框中框」（MTM-216 返工）
+
+    原来这里是个高 240px 的滚动框，第二张卡片正好被切在中间，看着像坏了。
+    第一版我把高度放宽了，结果两张卡片正好装得下 —— 装得下就不溢出，
+    不溢出就拉不动，靠「在框里往下拉」触发的加载下一批也就永远不会发生，
+    商户只能看到前 2 家店。
+
+    这一版直接把框子取消：列表跟着整页往下走，第二张卡片完整显示，
+    下一批改由下面那个「加载更多店铺」按钮触发 —— 看得见、点得着，
+    也不用再跟页面抢手指。电脑上这一段不生效，那边照旧靠滚动加载。
+  */
+  .shop-list-wrapper {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .shop-list {
+    gap: 10px;
+  }
+
+  /* 一整条都能点，手指不用瞄准 */
+  .load-more-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid #d9e6ff;
+    border-radius: 8px;
+    background: #f5f9ff;
+    color: #1677ff;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .load-more-btn:active {
+    background: #e6f0ff;
+  }
+
+  .load-more-tip {
+    margin-top: 12px;
+  }
+
+  .shop-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .shop-info {
+    flex: none;
+  }
+
+  .shop-info .shop-name {
+    font-size: 16px;
+    margin-bottom: 6px;
+    word-break: break-all;
+  }
+
+  .shop-info .shop-meta {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  /* 两个数并排，各占一半 */
+  .shop-stats {
+    gap: 10px;
+    margin-right: 0;
+  }
+
+  /*
+    这里必须写死 padding：全局样式里也有一个叫 .stat-item 的类（控制台的统计卡片），
+    它带着 14px 16px 的内边距漏进来，把这两个小格子挤得只剩十几像素宽 ——
+    「二维码」竖排三行就是这么来的。
+  */
+  .shop-stats .stat-item {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.72);
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
+  .shop-stats .stat-item .stat-value {
+    font-size: 18px;
+    line-height: 1.25;
+    /* 金额特别大的时候宁可折行，也不许把卡片撑破 */
+    overflow-wrap: anywhere;
+  }
+
+  .shop-stats .stat-item .stat-label {
+    font-size: 12px;
+    margin-bottom: 0;
+    /* 「二维码」「累计交易」再窄也得横着排 */
+    white-space: nowrap;
+  }
+
+  .shop-actions {
+    justify-content: flex-end;
+    gap: 12px;
+  }
+
+  /* 「启用 / 禁用」是个小圆标签，被拆成两行就不成形了 */
+  .status-tag {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* 订单筛选：四个输入框写死了宽度，手机上排得七零八落，改成一行两个 */
+  .order-filter {
+    gap: 8px;
+  }
+
+  .order-filter > * {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+  }
+
+  .order-filter :deep(.el-input),
+  .order-filter :deep(.el-select) {
+    width: 100% !important;
+  }
+
+  /* Element 会给挨着的两个按钮自动加左边距，加上 gap 就正好放不下两个，
+     「搜索」「重置」各占一整行很难看，这里去掉它，让两个按钮并排 */
+  .order-filter :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
+}
 </style>
 
 <!-- 全局样式用于预览弹窗 -->

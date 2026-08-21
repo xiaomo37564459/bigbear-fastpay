@@ -36,12 +36,13 @@
     <!-- 文档内容 -->
     <div class="docs-container">
       <el-row :gutter="24">
-        <!-- 左侧导航 -->
-        <el-col :span="5">
+        <!-- 左侧导航（窄屏下自动变成顶部横向滚动的一条，见 style 里的媒体查询） -->
+        <el-col :xs="24" :sm="24" :md="5">
           <div class="docs-nav">
             <el-menu :default-active="activeSection" @select="scrollToSection">
               <el-menu-item index="intro">产品介绍</el-menu-item>
               <el-menu-item index="quick-start">快速开始</el-menu-item>
+              <el-menu-item index="epay">易支付协议对接</el-menu-item>
               <el-menu-item index="page-pay">页面跳转支付</el-menu-item>
               <el-menu-item index="api-pay">API接口支付</el-menu-item>
               <el-menu-item index="query-order">查询订单</el-menu-item>
@@ -54,7 +55,7 @@
         </el-col>
 
         <!-- 右侧内容 -->
-        <el-col :span="19">
+        <el-col :xs="24" :sm="24" :md="19">
           <!-- 产品介绍 -->
           <section id="intro" class="doc-section">
             <h2>产品介绍</h2>
@@ -128,6 +129,205 @@
                   <p>后端调用接口获取收款二维码，前端展示供用户扫码</p>
                   <el-tag size="small">适合APP</el-tag>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            易支付协议对接
+            想接现成系统（sub2api / 发卡站 / 商城）的商户看这一章，
+            内容与登录后商户后台的开发文档页共用同一份数据（epayDocData.js）。
+          -->
+          <section id="epay" class="doc-section epay-section">
+            <h2>
+              易支付协议对接（sub2api、发卡站、商城系统）
+              <el-tag type="success" size="small" effect="dark" class="epay-title-tag">不用改代码</el-tag>
+            </h2>
+            <p>{{ epayIntro.who }}</p>
+            <p>{{ epayIntro.when }}</p>
+            <el-alert type="info" :closable="false" style="margin-top: 12px;">
+              <template #title>{{ epayIntro.note }}</template>
+            </el-alert>
+
+            <!-- 第一步：对方后台填什么。整节里最重要的就是这张表 -->
+            <h3>第一步：在对方系统后台填这三项</h3>
+            <p>以 sub2api 为例，其他易支付系统的字段名大同小异，对着填就行。</p>
+            <el-table v-if="!isNarrow" :data="epayConfigFields" border size="small" class="epay-key-table">
+              <el-table-column prop="field" label="对方后台的配置项" min-width="190" />
+              <el-table-column label="填什么" min-width="340">
+                <template #default="{ row }">
+                  <span class="epay-fill">{{ row.value }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="tip" label="说明" min-width="300" />
+            </el-table>
+            <!--
+              手机上表格得横着拖才看得全，而这张表恰恰是商户要一个字一个字照着抄的，
+              接口地址被截断就等于填错。窄屏改成上下排的卡片，内容完全一样。
+            -->
+            <div v-else class="epay-config-cards">
+              <div v-for="item in epayConfigFields" :key="item.field" class="epay-config-card">
+                <div class="cfg-field">{{ item.field }}</div>
+                <div class="cfg-value"><span class="epay-fill">{{ item.value }}</span></div>
+                <div class="cfg-tip">{{ item.tip }}</div>
+              </div>
+            </div>
+
+            <el-alert type="warning" :closable="false" style="margin-top: 16px;">
+              <template #title>
+                <strong>这一条填错的人最多：</strong>接口地址只填到
+                <code>/fastpay-server</code> 为止，后面的
+                <code>/submit.php</code> 是对方系统自动拼上去的，<strong>不用你填</strong>。
+              </template>
+            </el-alert>
+
+            <p style="margin-top: 12px;">填完之后，用 0.01 元真金白银测一笔：能扫码付款、订单变成已支付，就算通了。</p>
+
+            <!-- 三个接口 -->
+            <h3>平台提供的三个接口</h3>
+            <p>完整地址 = <code>{{ EPAY_BASE_URL }}</code> 加上下面这一列的路径。</p>
+            <el-table :data="epayEndpoints" border size="small">
+              <el-table-column prop="path" label="接口" min-width="170" />
+              <el-table-column prop="method" label="方法" min-width="110" />
+              <el-table-column prop="desc" label="用途" min-width="320" />
+            </el-table>
+
+            <!-- 下单参数 -->
+            <h3>下单参数（submit.php 和 mapi.php 通用）</h3>
+            <el-table :data="epayRequestParams" border size="small">
+              <el-table-column prop="name" label="参数名" min-width="130" />
+              <el-table-column prop="required" label="必填" width="80">
+                <template #default="{ row }">
+                  <el-tag :type="row.required ? 'danger' : 'info'" size="small">
+                    {{ row.required ? '是' : '否' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="type" label="类型" width="90" />
+              <el-table-column prop="desc" label="说明" min-width="320" />
+            </el-table>
+            <el-alert type="info" :closable="false" style="margin-top: 16px;">
+              <template #title>
+                易支付协议里没有「店铺」这个概念，所以不用传店铺号，平台会在你名下的店铺里自动挑一张可用收款码。
+                对方系统额外带上来的参数（比如 <code>clientip</code>、<code>device</code>）平台不使用，但它们
+                <strong>必须一起参与签名</strong> —— 收到什么就签什么，别自己挑字段。
+              </template>
+            </el-alert>
+
+            <h3>mapi.php 返回什么</h3>
+            <div class="code-block">
+              <pre>{{ epayMapiResponse }}</pre>
+            </div>
+            <el-alert type="warning" :closable="false" style="margin-top: 12px;">
+              <template #title>
+                <strong>成功的标志是 <code>code = 1</code>，不是 200</strong> —— 这是易支付协议自己的约定。
+                失败返回 <code>{"code":-1,"msg":"失败原因"}</code>，两种情况的 HTTP 状态码都是 200，
+                只能看返回内容里的 <code>code</code> 判断成败。
+              </template>
+            </el-alert>
+
+            <!-- 签名 -->
+            <h3>签名算法</h3>
+            <el-alert type="error" :closable="false" style="margin-bottom: 16px;">
+              <template #title>
+                <strong>先看这一条：这里的签名算法和本页「签名算法」那一节完全不是一回事。</strong>
+                本节这套是「末尾直接拼密钥、结果转小写」，原生那套是「末尾拼 &amp;key=密钥、结果转大写」。
+                <strong>两套不能混用，用错了一定报签名错误</strong>，而且光看签名串是看不出问题在哪的。
+              </template>
+            </el-alert>
+
+            <div class="steps epay-steps">
+              <div v-for="(step, i) in epaySignSteps" :key="step.title" class="step">
+                <div class="step-num">{{ i + 1 }}</div>
+                <div class="step-content">
+                  <h4>{{ step.title }}</h4>
+                  <p>{{ step.desc }}</p>
+                </div>
+              </div>
+            </div>
+
+            <h3>两套签名到底差在哪</h3>
+            <el-table :data="epaySignDiff" border size="small" class="epay-diff-table">
+              <el-table-column prop="item" label="对比项" min-width="140" />
+              <el-table-column prop="native" label="原生接口 /api/pay/*" min-width="230" />
+              <el-table-column prop="epay" label="易支付 *.php（本节）" min-width="260" />
+            </el-table>
+
+            <h3>照着这个例子自己验一遍</h3>
+            <p>
+              商户编号 <code>{{ epaySignExample.merchantNo }}</code>、密钥
+              <code>{{ epaySignExample.apiSecret }}</code>，按上面五步拼出来的待签名字符串是：
+            </p>
+            <div class="code-block">
+              <pre>{{ epaySignExample.signStr }}</pre>
+            </div>
+            <p style="margin-top: 12px;">对它做 MD5、转小写，得到的 <code>sign</code> 就是：</p>
+            <div class="code-block">
+              <pre>{{ epaySignExample.sign }}</pre>
+            </div>
+            <p style="margin-top: 12px;">
+              这个值是真的，你可以在自己电脑上跑一句
+              <code>printf '%s' '上面那串' | md5sum</code> 对一下答案。算出来一样，说明你的签名代码写对了。
+            </p>
+
+            <h3>代码示例</h3>
+            <el-tabs type="border-card" class="code-tabs">
+              <el-tab-pane label="PHP">
+                <div class="code-block">
+                  <pre>{{ epayPhpCode }}</pre>
+                </div>
+              </el-tab-pane>
+              <el-tab-pane label="Java">
+                <div class="code-block">
+                  <pre>{{ epayJavaCode }}</pre>
+                </div>
+              </el-tab-pane>
+              <el-tab-pane label="Python">
+                <div class="code-block">
+                  <pre>{{ epayPythonCode }}</pre>
+                </div>
+              </el-tab-pane>
+            </el-tabs>
+
+            <!-- 回调 -->
+            <h3>回调通知（付款成功后平台怎么通知你）</h3>
+            <div class="api-endpoint">
+              <el-tag>GET</el-tag>
+              <code>你下单时填的 notify_url</code>
+              <span class="endpoint-desc">注意是 GET，不是 POST</span>
+            </div>
+            <p>用户付款成功后，平台会按易支付协议的格式请求你填的地址，长这样：</p>
+            <div class="code-block">
+              <pre>{{ epayNotifySignExample.url }}</pre>
+            </div>
+
+            <h3>通知参数</h3>
+            <el-table :data="epayNotifyParams" border size="small">
+              <el-table-column prop="name" label="参数名" min-width="140" />
+              <el-table-column prop="type" label="类型" width="90" />
+              <el-table-column prop="desc" label="说明" min-width="340" />
+            </el-table>
+
+            <el-alert type="warning" :closable="false" style="margin-top: 16px;">
+              <template #title>
+                <strong>收到之后必须原样返回字符串 <code>success</code></strong>，
+                多一个字、少一个字母都不算数。收不到 <code>success</code> 平台会再发一次：{{ epayNotifyRetry.text }}
+                也就是说<strong>同一笔可能收到好几次</strong>，你那边要先查自己库里的状态，
+                已经处理过的直接回 <code>success</code>，别重复发货。
+              </template>
+            </el-alert>
+
+            <h3>回调验签示例（PHP）</h3>
+            <div class="code-block">
+              <pre>{{ epayNotifyPhpCode }}</pre>
+            </div>
+
+            <!-- 常见问题 -->
+            <h3>常见问题</h3>
+            <div class="epay-faq">
+              <div v-for="item in epayFaq" :key="item.q" class="epay-faq-item">
+                <div class="faq-q">{{ item.q }}</div>
+                <div class="faq-a">{{ item.a }}</div>
               </div>
             </div>
           </section>
@@ -461,8 +661,29 @@ sign = MD5(str).toUpperCase()</pre>
 /**
  * Fast 易支付 - 公开开发文档
  */
-import { ref } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { Link, Connection, Check } from '@element-plus/icons-vue'
+// 易支付章节和登录后商户后台的文档页共用同一份文案，
+// 以后改文档只改 epayDocData.js 一个地方
+import {
+  EPAY_BASE_URL,
+  epayIntro,
+  epayEndpoints,
+  epayConfigFields,
+  epayRequestParams,
+  epaySignSteps,
+  epaySignExample,
+  epayNotifySignExample,
+  epaySignDiff,
+  epayMapiResponse,
+  epayNotifyRetry,
+  epayNotifyParams,
+  epayFaq,
+  epayPhpCode,
+  epayJavaCode,
+  epayPythonCode,
+  epayNotifyPhpCode
+} from './epayDocData.js'
 
 const activeSection = ref('intro')
 
@@ -473,6 +694,20 @@ const scrollToSection = (index) => {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 }
+
+// 手机上「对方后台填什么」那张表要换个排法，见模板里的 isNarrow。
+// 初始值在这里就算好，别等 onMounted —— 不然手机上会先闪一下表格再变成卡片。
+const NARROW_WIDTH = 768
+const isNarrow = ref(typeof window !== 'undefined' && window.innerWidth < NARROW_WIDTH)
+const syncNarrow = () => {
+  isNarrow.value = window.innerWidth < NARROW_WIDTH
+}
+onMounted(() => {
+  window.addEventListener('resize', syncNarrow)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncNarrow)
+})
 
 // 页面跳转支付参数
 const pagePayParams = [
@@ -1044,6 +1279,99 @@ const errorCodes = [
   margin-left: auto;
 }
 
+/* ---- 易支付章节 ---- */
+
+/* 标题旁边的「不用改代码」小标签 */
+.epay-title-tag {
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
+/* 「填什么」那一列要一眼看到，商户是直接照着抄的 */
+.epay-fill {
+  display: inline-block;
+  padding: 3px 8px;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  border-radius: 4px;
+  color: #d46b08;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 13px;
+  /* 窄了要能换行，但优先在连字符这种自然位置断，别把 fastpay-server 拦腰砍断 */
+  overflow-wrap: anywhere;
+}
+
+/* 手机上同一份内容改成上下排的卡片，见模板里的 isNarrow */
+.epay-config-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.epay-config-card {
+  padding: 14px;
+  background: #f8f9fa;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+
+  .cfg-field {
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 8px;
+  }
+
+  .cfg-value {
+    margin-bottom: 8px;
+  }
+
+  .cfg-tip {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.7;
+  }
+}
+
+/* 五步签名：最后一步单独占一行，别在两列网格里吊着 */
+.epay-steps {
+  .step:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+/* 两套签名对比表：易支付那一列（本节讲的）着重标出来 */
+.epay-diff-table {
+  :deep(td.el-table__cell:last-child) {
+    background: #f0f9ff;
+  }
+}
+
+.epay-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.epay-faq-item {
+  padding: 14px 16px;
+  background: #f8f9fa;
+  border-left: 3px solid #1677ff;
+  border-radius: 0 8px 8px 0;
+
+  .faq-q {
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 6px;
+  }
+
+  .faq-a {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.8;
+  }
+}
+
 /* 响应式 */
 @media (max-width: 992px) {
   .method-cards,
@@ -1064,6 +1392,148 @@ const errorCodes = [
 
   .feature-list {
     grid-template-columns: 1fr;
+  }
+
+  /*
+    接口地址这种长 code 在手机上要能换行，别把整页撑出横向滚动条。
+    这条对整个页面的 .api-endpoint 生效 —— 原有 WebSocket 章节那条
+    ws:// 长地址以前在手机上就会把页面撑宽，这次一并修掉。
+  */
+  .api-endpoint {
+    code {
+      word-break: break-all;
+      white-space: normal;
+    }
+  }
+}
+
+/* ============================================================
+   手机 / 平板：这一页原来能左右横着推（MTM-216）
+
+   原因是左右两栏写死了 5 : 19，手机上左边目录只剩 70 来像素，
+   九个目录名（「WebSocket监听」最长）根本塞不进去，直接顶出屏幕；
+   右边正文也只剩 290px，接口地址和表格跟着往外撑。
+   390px 的屏幕上整页实际有 518px 宽，手指一划就能把页面推走。
+
+   改法：窄屏改成一栏，目录挪到顶上变成横着滑的一条，正文占满整屏。
+   ≥992px 一条规则都不生效，电脑端样子原封不动。
+   ============================================================ */
+@media (max-width: 991px) {
+  /* 目录不再吸在左边，改成顶上横着滑的一条 */
+  .docs-nav {
+    position: static;
+    margin-bottom: 12px;
+    padding: 4px;
+  }
+
+  /* 这几条必须写成不嵌套的形式，嵌套在 .docs-nav 里面 :deep() 不会展开 */
+  .docs-nav :deep(.el-menu) {
+    display: flex;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: none;
+  }
+
+  .docs-nav :deep(.el-menu-item) {
+    flex: 0 0 auto;
+    height: 38px;
+    line-height: 38px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 767px) {
+  /* 顶栏：品牌名不许被拆行，右上角两个按钮优先保命 */
+  .header-container {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .logo {
+    min-width: 0;
+  }
+
+  .logo-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .logo-icon svg {
+    width: 30px;
+    height: 30px;
+  }
+
+  .logo-text {
+    margin-left: 8px;
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 这一页本来就叫「开发文档」，角标属于可省信息，先让位 */
+  .logo-badge {
+    display: none;
+  }
+
+  .header-actions {
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .docs-container {
+    padding: 76px 12px 32px;
+  }
+
+  /*
+    el-row 带 gutter 会给自己加一对负外边距（各 -12px），一栏排布时
+    它就成了多顶出来的一截，屏幕再窄一点就能把整页推走。直接归零。
+  */
+  .docs-container > :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  .docs-container > :deep(.el-row > .el-col) {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .doc-section {
+    padding: 16px 14px;
+  }
+
+  .doc-section h2 {
+    font-size: 18px;
+  }
+
+  /* 接口地址那一条：长地址该折就折，别顶开卡片 */
+  .api-endpoint {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .api-endpoint code {
+    overflow-wrap: anywhere;
+  }
+
+  .endpoint-desc {
+    margin-left: 0;
+  }
+
+  .code-block {
+    padding: 12px;
+  }
+
+  .code-block pre {
+    font-size: 12px;
+  }
+
+  /* 表格自己横着滑就行，不许顶开外面的容器 */
+  .doc-section :deep(.el-table) {
+    max-width: 100%;
   }
 }
 </style>
