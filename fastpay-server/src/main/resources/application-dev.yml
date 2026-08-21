@@ -15,6 +15,12 @@ spring:
   #   DB_URL=jdbc:postgresql://localhost:5432/bigbear_fastpay
   #   DB_USERNAME=postgres
   #   DB_PASSWORD=你的密码
+  #
+  # 关于 serverTimezone=Asia/Shanghai（MTM-187）：
+  #   MySQL Connector/J 会做「JVM 默认时区 → serverTimezone」的时间戳转换，两边不一致就会
+  #   出现「订单超时不关单」这类偏差。FastPayApplication 已把 JVM 默认时区钉死到 Asia/Shanghai，
+  #   所以这里保持一致，写 serverTimezone=Asia/Shanghai 让驱动的转换恰好是零偏移。
+  #   PostgreSQL 侧没有这个参数，行为已经跟着 JVM 默认时区走，只要 JVM 被钉死，两条路径就对齐。
   datasource:
     driver-class-name: ${DB_DRIVER:com.mysql.cj.jdbc.Driver}
     url: ${DB_URL:jdbc:mysql://localhost:3306/bigbear_fastpay?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}

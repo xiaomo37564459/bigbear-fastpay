@@ -167,6 +167,17 @@ describe('订单详情弹窗', () => {
     wrapper.unmount()
   })
 
+  it('大额订单的金额完整显示，不会被截掉尾数（MTM-168）', async () => {
+    // 假数据原来只有 ¥199.00 这一种小额，大额金额的显示一直没被测到
+    const bigAmount = { ...row, amount: '888888.88' }
+    const loader = vi.fn().mockResolvedValue({ code: 200, data: { ...detail, payAmount: '888888.88' } })
+    const wrapper = mountDialog({ row: bigAmount, loader })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('888888.88')
+    wrapper.unmount()
+  })
+
   it('每次重新打开都会重新拉一次详情，不会显示上一笔订单的残留', async () => {
     const loader = vi.fn().mockResolvedValue({ code: 200, data: detail })
     const wrapper = mountDialog({ loader, modelValue: false })
@@ -182,6 +193,73 @@ describe('订单详情弹窗', () => {
     await flushPromises()
     expect(loader).toHaveBeenCalledTimes(2)
     expect(loader).toHaveBeenLastCalledWith('FP-OTHER')
+    wrapper.unmount()
+  })
+})
+
+describe('订单详情弹窗 - 订单来源与回调失败原因', () => {
+  /** 一笔易支付进来、回调超时失败的订单 */
+  const epayTimeout = {
+    ...row,
+    orderSource: 'epay',
+    notifyStatus: 2,
+    notifyResult: null,
+    notifyError: 'SocketTimeoutException: Read timed out'
+  }
+
+  it('两项都带标签渲染出来，标签不能是空白格', async () => {
+    const wrapper = mountDialog({ loader: null, row: epayTimeout })
+    await flushPromises()
+
+    const labels = wrapper.findAll('.el-descriptions__label').map(n => n.text())
+    // 标签必须真的画出来，否则页面上是一个没有名字的格子
+    expect(labels).toContain('订单来源')
+    expect(labels).toContain('失败原因')
+    // 顺带守住原有的长内容字段，别被新字段的排版挤掉标签
+    expect(labels).toContain('扩展参数')
+
+    const text = wrapper.text()
+    expect(text).toContain('易支付协议')
+    expect(text).toContain('SocketTimeoutException: Read timed out')
+    expect(text).toContain('发通知时报的错')
+    wrapper.unmount()
+  })
+
+  it('原生接口进来、对方回了非 success 时，显示对方返回的原文', async () => {
+    const wrapper = mountDialog({
+      loader: null,
+      row: { ...row, orderSource: 'native', notifyStatus: 2, notifyResult: '{"code":500}', notifyError: null }
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('平台接口')
+    expect(wrapper.text()).toContain('{"code":500}')
+    expect(wrapper.text()).toContain('对方返回的内容')
+    wrapper.unmount()
+  })
+
+  it('回调成功的订单不显示失败原因这一行，但订单来源照常显示', async () => {
+    const wrapper = mountDialog({
+      loader: null,
+      row: { ...row, orderSource: 'native', notifyStatus: 1, notifyResult: 'success', notifyError: null }
+    })
+    await flushPromises()
+
+    const labels = wrapper.findAll('.el-descriptions__label').map(n => n.text())
+    expect(labels).not.toContain('失败原因')
+    expect(labels).toContain('订单来源')
+    wrapper.unmount()
+  })
+
+  it('失败原因很长时能整段看到，不被截断成省略号', async () => {
+    const longError = 'ConnectException: ' + 'x'.repeat(400)
+    const wrapper = mountDialog({
+      loader: null,
+      row: { ...epayTimeout, notifyError: longError }
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain(longError)
     wrapper.unmount()
   })
 })

@@ -422,11 +422,13 @@ Location: http://你的商户前端域名/fastpay-merchant/pay/FP202608191200001
 |---|---|---|
 | `orderNo` | String | 平台订单号 |
 | `outTradeNo` | String | 你的订单号 |
-| `amount` | 数字 | 下单时的金额 |
-| `payAmount` | 数字 | 实际收到的金额。**没付款时是 `null`** |
+| `amount` | 数字 | 下单时报的原始金额 |
+| `payAmount` | 数字 | **平台实际要求用户付的金额**（下单时就定好了，即使还没付也不是 `null`）。为了不让同金额的订单撞在一起认错人，可能会在 `amount` 的基础上做几分钱微调（**±0.99 元以内**）。同金额并发下单时，第一笔就是 `amount` 本身，后面几笔会略高或略低 |
 | `status` | 数字 | **订单状态，见下表** |
 | `payTime` | String | 付款时间，**ISO-8601 带 `T`、可能带小数秒**。没付款时是 `null` |
 | `expireTime` | String | 过期时间，**ISO-8601 带 `T`、可能带小数秒** |
+
+> **⚠️ 对账口径**：`payAmount` 现在下单就已经落好了，`amount` 是商户报的原价，`payAmount` 是用户实际要付的数，两者可能差最多 ±0.99 元。做对账时想拿"用户真实付的钱"，用 `payAmount`；想拿"原始订单价"，用 `amount`。
 
 **订单状态 `status` 对照表**（整个平台统一用这一套值）
 
@@ -480,7 +482,7 @@ Location: http://你的商户前端域名/fastpay-merchant/pay/FP202608191200001
 | `orderNo` | String | 平台订单号 |
 | `status` | 数字 | 订单状态，同 [3.3](#33-get-apipayquery--用你自己的订单号查这单付了没) 的对照表 |
 | `payTime` | String | 付款时间（ISO-8601 带 `T`），没付款时是 `null` |
-| `payAmount` | 数字 | 实付金额，没付款时是 `null` |
+| `payAmount` | 数字 | 应付金额（**下单时就有值**，不是 `null`；可能与 `amount` 差 ±0.99 元，见 [3.3](#33-get-apipayquery--用你自己的订单号查这单付了没) 的对账口径说明） |
 
 > **⚠️ 不要拿这个接口当发货依据。** 轮询能被前端伪造（用户改改 JS 就行）。发货只认异步回调。
 
@@ -802,8 +804,8 @@ HTTP 状态码是 **200**，不是 404 也不是 500。
 | `merchantNo` | String | 商户编号 |
 | `orderNo` | String | 平台订单号 |
 | `outTradeNo` | String | **你自己的订单号，拿它去找你库里的单** |
-| `amount` | String | 下单金额 |
-| `payAmount` | String | 实付金额 |
+| `amount` | String | **你下单时报的原始金额** —— 拿来和你自己库里的订单金额做金额校验就用这个 |
+| `payAmount` | String | **用户实际付的金额**（平台可能在 `amount` 基础上做过 ±0.99 元的微调，为了避免同金额并发订单撞在一起）。校验金额时**不要用这个字段**，见下面 PHP 示例第 4 步 |
 | `payType` | String | `wxpay` / `alipay` |
 | `status` | String | `1` = 已支付。**只有这个值才发货** |
 | `payTime` | String | 付款时间，形如 `2026-08-19T17:59:32.059553400`（**中间是字母 T，秒后面通常带 9 位纳秒**） |
@@ -876,7 +878,10 @@ if (!$order || $order['status'] === 'PAID') {
 }
 
 // 4. 核对金额，防止被改价
-if (bccomp($params['payAmount'], $order['amount'], 2) !== 0) {
+//    ⚠️ 用 amount（原始订单金额）比对，不要用 payAmount。
+//    payAmount 是平台为了避免同金额撞单做过微调后的"用户实付金额"，可能和 amount 差 ±0.99 元；
+//    如果这里比 payAmount，正常付款也会被判成"金额不符"，导致付款成功不发货。
+if (bccomp($params['amount'], $order['amount'], 2) !== 0) {
     echo 'fail';
     exit;
 }
@@ -903,7 +908,7 @@ echo 'success';                      // 必须回这个字符串，否则平台�
 | `out_trade_no` | String | **你自己的订单号** |
 | `type` | String | `wxpay` / `alipay` |
 | `name` | String | 商品名称。下单时没传就是空字符串 |
-| `money` | String | **实付金额**（拿不到实付金额时退回下单金额） |
+| `money` | String | **下单时报的原始金额**（就是你 `/mapi.php` 里传的 `money`），**不是**用户实际付款金额。这是为了让 sub2api、彩虹易支付这类对接方的对账系统能识别得上——它们那边记的就是下单金额，回传微调后的实付金额会被判成"金额不符"直接拒付。想拿真实付款金额请用 [3.3 查询接口](#33-get-apipayquery--用你自己的订单号查这单付了没) 的 `payAmount` 字段 |
 | `trade_status` | String | 固定 `TRADE_SUCCESS`。**只有付款成功才会发回调**，不会推失败通知 |
 | `sign` | String | 签名，**32 位小写** |
 | `sign_type` | String | 固定 `MD5`。**不参与签名** |

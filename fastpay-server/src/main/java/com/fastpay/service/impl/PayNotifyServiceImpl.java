@@ -14,6 +14,7 @@ import com.fastpay.mapper.PayQrcodeMapper;
 import com.fastpay.mapper.ShopMapper;
 import com.fastpay.service.PayNotifyService;
 import com.fastpay.service.PayOrderService;
+import com.fastpay.service.UnmatchedNotifyService;
 import com.fastpay.websocket.PayResultWebSocket;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -52,6 +53,7 @@ public class PayNotifyServiceImpl implements PayNotifyService {
     private final MerchantMapper merchantMapper;
     private final MerchantChannelMapper merchantChannelMapper;
     private final ShopMapper shopMapper;
+    private final UnmatchedNotifyService unmatchedNotifyService;
     private final Executor wsNotifyExecutor;
 
     @Value("${fastpay.pay.order-timeout-minutes}")
@@ -63,6 +65,7 @@ public class PayNotifyServiceImpl implements PayNotifyService {
                                 MerchantMapper merchantMapper,
                                 MerchantChannelMapper merchantChannelMapper,
                                 ShopMapper shopMapper,
+                                UnmatchedNotifyService unmatchedNotifyService,
                                 @Qualifier("wsNotifyExecutor") Executor wsNotifyExecutor) {
         this.payOrderMapper = payOrderMapper;
         this.payQrcodeMapper = payQrcodeMapper;
@@ -70,6 +73,7 @@ public class PayNotifyServiceImpl implements PayNotifyService {
         this.merchantMapper = merchantMapper;
         this.merchantChannelMapper = merchantChannelMapper;
         this.shopMapper = shopMapper;
+        this.unmatchedNotifyService = unmatchedNotifyService;
         this.wsNotifyExecutor = wsNotifyExecutor;
     }
 
@@ -186,8 +190,22 @@ public class PayNotifyServiceImpl implements PayNotifyService {
         // 查找匹配的订单
         PayOrder matchedOrder = findMatchingOrder(amount, payType, notifyTime, bizCallbackDTO);
         if (matchedOrder == null) {
-            log.warn("未找到匹配的待支付订单，amount={}, payType={}, 耗时{}ms", 
+            log.warn("未找到匹配的待支付订单，amount={}, payType={}, 耗时{}ms",
                     amount, payType, System.currentTimeMillis() - startTime);
+            // 把这笔"钱到了但认不上单"的记录落到 fp_unmatched_notify，管理后台能看到，
+            // 需求方就不用翻日志了；配合 /api/admin/order/{orderNo}/confirm 可以人工救回
+            final MerchantChannel channel = bizCallbackDTO.getMerchantChannel();
+            try {
+                unmatchedNotifyService.recordUnmatched(
+                        amount, payType,
+                        channel != null ? channel.getMerchantId() : null,
+                        channel != null ? channel.getId() : null,
+                        buildRawMessageForRecord(notifyDTO),
+                        notifyTime);
+            } catch (Exception recordEx) {
+                // 落表失败也别影响原有返回，只是提示需要人工翻日志
+                log.error("落未匹配通知记录失败，amount={}, payType={}", amount, payType, recordEx);
+            }
             return false;
         }
 
@@ -221,45 +239,64 @@ public class PayNotifyServiceImpl implements PayNotifyService {
     }
 
     /**
-     * 查找匹配的订单
-     * 根据金额、支付类型、商户ID查找待支付订单
+     * 查找匹配的订单：改按 pay_amount 匹配（不是 amount）。
+     * 因为下单时已经通过占位表保证「同一商户+同一支付方式下未过期未支付订单 pay_amount 互不相同」，
+     * 所以按 pay_amount 精确匹配天然不会撞单。
      */
     private PayOrder findMatchingOrder(BigDecimal amount, String payType, LocalDateTime notifyTime, BizCallbackDTO bizCallbackDTO) {
         final MerchantChannel merchantChannel = bizCallbackDTO.getMerchantChannel();
         final Long merchantId = merchantChannel.getMerchantId();
         final Long channelId = merchantChannel.getId();
 
-        
-        // 查询该商户该通道下的待支付订单
-        // 条件：金额匹配、支付类型匹配、状态为待支付、未过期
+        // 条件：pay_amount 精确匹配（不再用 amount）、支付类型匹配、状态为待支付、未过期
         List<PayOrder> pendingOrders = payOrderMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<PayOrder>()
                         .eq(PayOrder::getMerchantId, merchantId)
                         .eq(PayOrder::getPayType, payType)
                         .eq(PayOrder::getStatus, Constants.OrderStatus.UNPAID)
-                        .eq(PayOrder::getAmount, amount)
-                        // 未过期
+                        .eq(PayOrder::getPayAmount, amount)
                         .gt(PayOrder::getExpireTime, LocalDateTime.now())
-                        // 按创建时间升序，优先匹配较早的订单
+                        // 保留按创建时间升序，仅作为兜底：老数据里可能残留同 pay_amount 的记录
                         .orderByAsc(PayOrder::getCreateTime)
         );
-        
+
         if (pendingOrders == null || pendingOrders.isEmpty()) {
-            log.info("未找到匹配订单，merchantId={}, channelId={}, amount={}, payType={}", 
+            log.info("未找到匹配订单，merchantId={}, channelId={}, payAmount={}, payType={}",
                     merchantId, channelId, amount, payType);
             return null;
         }
-        
-        // 如果有多个匹配订单，优先选择时间最接近的
+
         for (PayOrder order : pendingOrders) {
             if (isTimeValid(order, notifyTime)) {
-                log.info("找到匹配订单，orderNo={}, amount={}", order.getOrderNo(), amount);
+                log.info("找到匹配订单，orderNo={}, payAmount={}", order.getOrderNo(), amount);
                 return order;
             }
         }
-        
-        // 如果没有时间匹配的，返回null
+
         return null;
+    }
+
+    /**
+     * 未匹配通知落表时拼一个简明可读的原始通知内容，便于管理员事后核对。
+     * 不落完整签名字段，避免把 secret 相关信息随便存库。
+     */
+    private String buildRawMessageForRecord(PayNotifyDTO dto) {
+        if (dto == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        if (StringUtils.hasText(dto.getTitle())) {
+            sb.append("title=").append(dto.getTitle());
+        }
+        if (StringUtils.hasText(dto.getMsg())) {
+            if (sb.length() > 0) sb.append(" | ");
+            sb.append("msg=").append(dto.getMsg());
+        }
+        if (StringUtils.hasText(dto.getReceiveTime())) {
+            if (sb.length() > 0) sb.append(" | ");
+            sb.append("receiveTime=").append(dto.getReceiveTime());
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     /**

@@ -44,6 +44,20 @@ public interface PayOrderService extends IService<PayOrder> {
     PayOrder queryOrder(String orderNo);
 
     /**
+     * 获取订单详情（供 admin/merchant 详情接口使用），
+     * 在 {@link #queryOrder(String)} 的基础上补齐 merchantName / shopName，
+     * 保证详情接口和列表接口的返回口径一致（前端不用再从列表带名字过来顶）。
+     *
+     * @param orderNo    平台订单号
+     * @param merchantId 当前登录商户 ID。传 null 表示不做归属校验（管理后台走这条）；
+     *                   传具体值时，会校验订单是否属于该商户，不属于就抛
+     *                   {@link com.fastpay.common.BusinessException}，
+     *                   跟 {@link #confirmPay(String, Long)} 等方法的行为一致。
+     * @return 订单信息（含商户名、店铺名）；订单不存在返回 null
+     */
+    PayOrder getOrderDetail(String orderNo, Long merchantId);
+
+    /**
      * 查询订单状态（通过商户订单号）
      *
      * @param merchantNo  商户编号
