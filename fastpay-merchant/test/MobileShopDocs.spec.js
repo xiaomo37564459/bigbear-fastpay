@@ -26,11 +26,29 @@ vi.mock('jsqr', () => ({ default: () => null }))
 
 const page = (records) => Promise.resolve({ data: { records, total: records.length } })
 
-vi.mock('@/api', () => ({
-  getShopPage: () => page([
+/**
+ * 假的店铺接口：真的按页码分页，一页 2 条。
+ * `db.total` 决定这个商户名下一共有几家店，每个用例自己设。
+ */
+const db = vi.hoisted(() => ({
+  total: 2,
+  shops: [
     { id: 1, shopName: '大熊百货旗舰店', shopNo: 'S2026081900001', status: 1, qrcodeCount: 3, totalAmount: '12580.00' },
-    { id: 2, shopName: '大熊数码专营店', shopNo: 'S2026081900002', status: 0, qrcodeCount: 1, totalAmount: '860.50' }
-  ]),
+    { id: 2, shopName: '大熊数码专营店', shopNo: 'S2026081900002', status: 0, qrcodeCount: 1, totalAmount: '860.50' },
+    { id: 3, shopName: '大熊生鲜社区店', shopNo: 'S2026081900003', status: 1, qrcodeCount: 2, totalAmount: '3420.00' },
+    { id: 4, shopName: '大熊文具校园店', shopNo: 'S2026081900004', status: 1, qrcodeCount: 1, totalAmount: '178.00' },
+    { id: 5, shopName: '蹦蹦超市', shopNo: 'S2026081900005', status: 1, qrcodeCount: 4, totalAmount: '9060.30' }
+  ]
+}))
+
+vi.mock('@/api', () => ({
+  getShopPage: (params = {}) => {
+    const all = db.shops.slice(0, db.total)
+    const current = params.current || 1
+    const size = params.size || 2
+    const start = (current - 1) * size
+    return Promise.resolve({ data: { records: all.slice(start, start + size), total: all.length } })
+  },
   createShop: vi.fn(),
   updateShop: vi.fn(),
   updateShopStatus: vi.fn(),
@@ -76,6 +94,21 @@ const ruleIn = (css, mediaContains, selectorContains) => {
   return hit
 }
 
+/**
+ * 和 ruleIn 相反：取「不在任何媒体查询里」的那条基础规则（电脑端默认样式）。
+ */
+const plainRule = (css, selectorContains) => {
+  const root = postcss.parse(css)
+  let hit = null
+  root.walkRules((rule) => {
+    if (hit || rule.parent.type !== 'root' || !rule.selector.includes(selectorContains)) return
+    const decls = {}
+    rule.walkDecls((d) => { decls[d.prop] = d.value })
+    hit = decls
+  })
+  return hit
+}
+
 const noop = { template: '<div />' }
 const makeRouter = () => createRouter({
   history: createMemoryHistory(),
@@ -90,19 +123,22 @@ const makeRouter = () => createRouter({
 
 beforeEach(() => {
   localStorage.setItem('merchant_token', 'test-token')
+  // 假数据默认 2 家店（正好一页装完）；要测「装不完」的用例自己改成 5
+  db.total = 2
 })
 
-describe('店铺管理：手机上店铺卡片的结构', () => {
-  const mountShop = async () => {
-    const Shop = (await import('@/views/shop/index.vue')).default
-    const router = makeRouter()
-    await router.push('/console/shop')
-    await router.isReady()
-    const wrapper = mount(Shop, { global: { plugins: [router] } })
-    await flushPromises()
-    return wrapper
-  }
+/** 把店铺管理页真的挂起来（各用例共用） */
+const mountShop = async () => {
+  const Shop = (await import('@/views/shop/index.vue')).default
+  const router = makeRouter()
+  await router.push('/console/shop')
+  await router.isReady()
+  const wrapper = mount(Shop, { global: { plugins: [router] } })
+  await flushPromises()
+  return wrapper
+}
 
+describe('店铺管理：手机上店铺卡片的结构', () => {
   it('每张店铺卡片都由「信息 / 两个数 / 操作」三块组成', async () => {
     const wrapper = await mountShop()
     const items = wrapper.findAll('.shop-item')
@@ -156,12 +192,88 @@ describe('店铺管理：手机断点里的关键样式（≤767px）', () => {
     expect(rule['min-width']).toBe('0')
   })
 
-  it('店铺列表的高度放开了，第二张卡片不会再被拦腰截断', () => {
+  it('手机上列表不再是那个切一半的滚动框，第二张卡片完整显示', () => {
     const rule = ruleIn(css, '767px', '.shop-list-wrapper')
     expect(rule, '手机断点里没找到 .shop-list-wrapper 的规则').not.toBeNull()
-    // 原来写死 240px，只够放一张半，第二张正好被切在中间
-    expect(rule['max-height']).toBeTruthy()
-    expect(rule['max-height']).not.toBe('240px')
+    // 返工后：框子整个取消（max-height: none、overflow: visible），
+    // 而不是第一版那种「放宽了但两张卡片正好装满」——装满就拉不动，
+    // 靠「在框里往下拉」触发的加载下一批就永远不会发生。
+    expect(rule['max-height']).toBe('none')
+    expect(rule.overflow).toBe('visible')
+  })
+
+  it('手机上的「加载更多店铺」按钮是露出来的', () => {
+    const rule = ruleIn(css, '767px', '.load-more-btn')
+    expect(rule, '手机断点里没找到 .load-more-btn 的规则').not.toBeNull()
+    expect(rule.display).toBe('flex')
+  })
+
+  it('电脑上这个按钮是藏起来的，电脑端的滚动加载一点不受影响', () => {
+    const rule = plainRule(css, '.load-more-btn')
+    expect(rule, '基础样式里没找到 .load-more-btn 的规则').not.toBeNull()
+    expect(rule.display).toBe('none')
+  })
+})
+
+describe('店铺管理：一页装不下时，手机上必须能看到全部店铺（MTM-216 返工）', () => {
+  it('5 家店：点「加载更多店铺」两次，5 家全部到手，按钮退场换成「没有更多了」', async () => {
+    db.total = 5
+    const wrapper = await mountShop()
+
+    // 第一页还是 2 家
+    expect(wrapper.findAll('.shop-item')).toHaveLength(2)
+
+    // 按钮在场、写着人话
+    let btn = wrapper.find('.load-more-btn')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('加载更多店铺')
+
+    // 点第一次：到第 2 页，共 4 家
+    await btn.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.shop-item')).toHaveLength(4)
+
+    // 点第二次：最后一页只有 1 家，共 5 家
+    btn = wrapper.find('.load-more-btn')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.shop-item')).toHaveLength(5)
+
+    // 真的能看到第 3~5 家的名字，不是只数了数量
+    const names = wrapper.findAll('.shop-name').map(n => n.text())
+    expect(names).toEqual(expect.arrayContaining(['大熊生鲜社区店', '大熊文具校园店', '蹦蹦超市']))
+
+    // 全部到手后：按钮退场，换成「没有更多了」
+    expect(wrapper.find('.load-more-btn').exists()).toBe(false)
+    const noMore = wrapper.find('.load-more-tip.no-more')
+    expect(noMore.exists()).toBe(true)
+    expect(noMore.text()).toContain('没有更多了')
+  })
+
+  it('只有 2 家店（一页就装完）时，不冒「加载更多」按钮，直接说「没有更多了」', async () => {
+    db.total = 2
+    const wrapper = await mountShop()
+    expect(wrapper.findAll('.shop-item')).toHaveLength(2)
+    expect(wrapper.find('.load-more-btn').exists()).toBe(false)
+    expect(wrapper.find('.load-more-tip.no-more').text()).toContain('没有更多了')
+  })
+
+  it('电脑端的「在框里往下拉」加载方式没被顺手弄掉', async () => {
+    db.total = 5
+    const wrapper = await mountShop()
+    expect(wrapper.findAll('.shop-item')).toHaveLength(2)
+
+    // 模拟电脑上：框里内容装不下、被拉到离底部不足 20px
+    const box = wrapper.find('.shop-list-wrapper').element
+    Object.defineProperty(box, 'clientHeight', { value: 240, configurable: true })
+    Object.defineProperty(box, 'scrollHeight', { value: 400, configurable: true })
+    Object.defineProperty(box, 'scrollTop', { value: 380, writable: true, configurable: true })
+    await wrapper.find('.shop-list-wrapper').trigger('scroll')
+    await flushPromises()
+
+    // 滚动触发了「要下一批」
+    expect(wrapper.findAll('.shop-item')).toHaveLength(4)
   })
 })
 

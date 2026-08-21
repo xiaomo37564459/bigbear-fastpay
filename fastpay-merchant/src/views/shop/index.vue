@@ -65,7 +65,25 @@
             <el-icon class="is-loading"><Loading /></el-icon>
             加载中...
           </div>
-          <div v-else-if="!shopHasMore && shopList.length > 0" class="load-more-tip no-more">
+          <!--
+            手机上的「加载更多」按钮（MTM-216 返工）
+
+            电脑上下一批店铺是靠「列表框装不下、用户在框里往下拉」触发的。手机上这一招
+            不能用：卡片改成上下排之后列表框不再溢出，拉不动就永远要不到下一批，商户
+            只能看到前 2 家店。手机上干脆不要这个框中框（手指本来也分不清在滑哪一层），
+            改成一个看得见、点得着的按钮。
+
+            这个按钮在电脑上是 display:none（见 style 里的媒体查询），电脑端一个像素都不动。
+          -->
+          <button
+            v-else-if="!loading && shopHasMore"
+            type="button"
+            class="load-more-btn"
+            @click="loadMoreShops"
+          >
+            加载更多店铺
+          </button>
+          <div v-else-if="shopList.length > 0" class="load-more-tip no-more">
             没有更多了
           </div>
         </div>
@@ -927,6 +945,14 @@ onMounted(() => {
   color: #c0c4cc;
 }
 
+/*
+  「加载更多店铺」按钮只在手机上出现（见文件末尾的媒体查询）。
+  电脑上是 display:none —— 不占位、不渲染，电脑端的样子一点不受影响。
+*/
+.load-more-btn {
+  display: none;
+}
+
 .shop-item {
   display: flex;
   align-items: center;
@@ -1267,16 +1293,53 @@ onMounted(() => {
    改成上下排：名字一行、编号一行、两个数并排一行、按钮一行。
    ============================================================ */
 @media (max-width: 767px) {
-  /* 240px 只够放一张半卡片，第二张正好被切在中间，看着像坏了。
-     放宽到能完整放下两张（默认每页就加载 2 条），超过两条才出现滚动条 ——
-     这个滚动条是「往下拉加载更多」用的，不能整个去掉。 */
+  /*
+    手机上不要「框中框」（MTM-216 返工）
+
+    原来这里是个高 240px 的滚动框，第二张卡片正好被切在中间，看着像坏了。
+    第一版我把高度放宽了，结果两张卡片正好装得下 —— 装得下就不溢出，
+    不溢出就拉不动，靠「在框里往下拉」触发的加载下一批也就永远不会发生，
+    商户只能看到前 2 家店。
+
+    这一版直接把框子取消：列表跟着整页往下走，第二张卡片完整显示，
+    下一批改由下面那个「加载更多店铺」按钮触发 —— 看得见、点得着，
+    也不用再跟页面抢手指。电脑上这一段不生效，那边照旧靠滚动加载。
+  */
   .shop-list-wrapper {
-    max-height: min(60vh, 440px);
-    padding-right: 2px;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .shop-list {
     gap: 10px;
+  }
+
+  /* 一整条都能点，手指不用瞄准 */
+  .load-more-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid #d9e6ff;
+    border-radius: 8px;
+    background: #f5f9ff;
+    color: #1677ff;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .load-more-btn:active {
+    background: #e6f0ff;
+  }
+
+  .load-more-tip {
+    margin-top: 12px;
   }
 
   .shop-item {
