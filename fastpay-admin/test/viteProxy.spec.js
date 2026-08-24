@@ -18,7 +18,7 @@ import { loadConfigFromFile } from 'vite'
 
 const CONFIG_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../vite.config.js')
 const BACKEND_DOMAIN = 'https://pay.copliot.cloud'
-// 匹配形如 121.4.28.146 的写死 IP
+// 匹配任意写死的 IPv4 地址（比如 192.0.2.1 这种）
 const HARDCODED_IP = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/
 
 // 用 vite 自己的加载器把配置真正跑一遍，拿到最终生效的转发设置
