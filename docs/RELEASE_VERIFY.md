@@ -131,7 +131,10 @@ bash deploy/verify-release.test.sh
 
 上面「版本号对不对得上」这一项，靠的是服务器上的 `/opt/fastpay/DEPLOYED_VERSION` 文件。它是 [部署说明](DEPLOY.md) 第三节里正式的**第 4 步**，在重启后端之后、验证之前：
 
+**下面的 `v1.6.0` 只是个格式示例，照抄会把线上的版本记录写错** —— 换成你这次实际发上去的那一版：
+
 ```bash
+# ⚠️ v1.6.0 换成你这次实际发的版本号，别照抄
 ssh root@<服务器> "echo v1.6.0 > /opt/fastpay/DEPLOYED_VERSION"
 ```
 
