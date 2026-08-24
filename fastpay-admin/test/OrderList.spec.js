@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import OrderList from '@/views/order/index.vue'
 import {
@@ -75,25 +75,55 @@ const bigAmountOrder = {
   payTime: '2026-08-19T11:02:31'
 }
 
-function mountList() {
-  return mount(OrderList, {
+const orders = [paidOrder, unpaidOrder, bigAmountOrder]
+
+/**
+ * 挂载一次页面，并且一直等到三行订单真的渲染出来为止。
+ *
+ * 这里等的是「条件成立」而不是「等固定一拍」：原来的写法是 mount 完 await 一次
+ * flushPromises 就直接断言，机器忙的时候那一拍不够，断言就扑空。现在改成反复检查
+ * 「表格里有没有三行」，慢就多查几轮，快就立刻返回，结果不再取决于机器当时的手速。
+ */
+async function mountAndWaitForRows() {
+  const wrapper = mount(OrderList, {
     global: {
       stubs: { Search: true, Refresh: true }
     }
   })
+
+  await vi.waitUntil(
+    async () => {
+      await flushPromises()
+      return wrapper.findAll('.el-table__row').length === orders.length
+    },
+    { timeout: 20000, interval: 20 }
+  )
+
+  return wrapper
 }
 
-beforeEach(() => {
-  vi.clearAllMocks()
+/**
+ * 整个文件只挂载一次组件。
+ *
+ * 挂载一次带 Element Plus 表格的页面在 jsdom 里要好几秒，原来每条用例各挂一次，
+ * 等于把每条用例都顶到超时线上 —— 这正是它们随机变红的直接原因。下面这些用例
+ * 用的是同一份假数据、而且只读不写（只查 DOM、不点不改），共用一个挂载结果完全安全。
+ */
+let wrapper
+
+beforeAll(async () => {
   getMerchantList.mockResolvedValue({ data: [] })
-  getOrderPage.mockResolvedValue({ data: { records: [paidOrder, unpaidOrder, bigAmountOrder], total: 3 } })
+  getOrderPage.mockResolvedValue({ data: { records: orders, total: orders.length } })
+  wrapper = await mountAndWaitForRows()
+})
+
+afterAll(() => {
+  wrapper?.unmount()
+  wrapper = null
 })
 
 describe('订单列表 - 创建时间要看得全', () => {
-  it('创建时间和支付时间都拆成日期一行、时刻一行，秒不能丢', async () => {
-    const wrapper = mountList()
-    await flushPromises()
-
+  it('创建时间和支付时间都拆成日期一行、时刻一行，秒不能丢', () => {
     const dates = wrapper.findAll('.time-date').map(node => node.text())
     const clocks = wrapper.findAll('.time-clock').map(node => node.text())
 
@@ -102,17 +132,11 @@ describe('订单列表 - 创建时间要看得全', () => {
     expect(clocks).toEqual(['10:30:00', '10:31:08', '10:45:00', '11:02:00', '11:02:31'])
   })
 
-  it('没支付的订单，支付时间显示占位符而不是空白', async () => {
-    const wrapper = mountList()
-    await flushPromises()
-
+  it('没支付的订单，支付时间显示占位符而不是空白', () => {
     expect(wrapper.findAll('.text-muted').length).toBeGreaterThan(0)
   })
 
-  it('平台订单号和商户订单号都还在，只是并成一栏上下两行', async () => {
-    const wrapper = mountList()
-    await flushPromises()
-
+  it('平台订单号和商户订单号都还在，只是并成一栏上下两行', () => {
     const text = wrapper.text()
     expect(text).toContain(paidOrder.orderNo)
     expect(text).toContain(paidOrder.outTradeNo)
@@ -235,10 +259,7 @@ describe('订单列表 - 金额列要放得下大额订单', () => {
     }
   })
 
-  it('大额订单的金额一位数字都不少地渲染出来', async () => {
-    const wrapper = mountList()
-    await flushPromises()
-
+  it('大额订单的金额一位数字都不少地渲染出来', () => {
     const amounts = wrapper.findAll('.amount-text').map(node => node.text())
     expect(amounts).toContain('¥888888.88')
   })
