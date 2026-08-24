@@ -242,17 +242,22 @@ fi
 #   6 判多重     fail = 判失败，脚本退出码 1；warn = 只提醒，不拦
 #   7 说人话     没通过时打给人看的那句话。写清楚「缺什么、补跑哪个脚本、不补会怎样」
 #
-# fail 还是 warn 的界：**漏跑了会当场出故障、或者会赔钱的判 fail；暂时还撑得住、
-# 但迟早出事的判 warn。**（V1_2 那两条是 warn：bcrypt 只有 60 字符，老的 64 位宽度
-# 眼下还装得下，见 docs/DEPLOY.md。其余几版漏跑都是当场出事，一律 fail。）
+# 第 6 段现在**每一行都是 fail**。以前 V1_2 那两条是 warn（bcrypt 只有 60 字符，老的
+# 64 位宽度眼下还装得下，不会当场出故障），但同一节检查里留一项只提醒，看的人会慢慢
+# 学会「这一节黄一下没关系」，那整节的拦截力就没了。而且这一项本来就不会误报：线上早
+# 就跑过 V1_2 了，真亮起来说明数据库处在没人预期的状态，那本来就该停下来看一眼（MTM-227）。
+#
+# warn 这一档代码里还留着，但**眼下一行都没在用**。将来真要用它，门槛是：漏跑了当天
+# 不会出任何故障，而且能说清楚「什么时候必须补上」—— 说不清楚就写 fail。
 #
 # 改这一段之前先跑一遍 deploy/verify-release.test.sh。这里最要命的错法是「该判 FAIL
 # 的判成了 PASS」—— 那等于告诉发版的人「迁移都跑过了」，而他不会再去核对第二遍。
 MIGRATION_CHECKS='
 # 版本 | 怎么查 | 表名                  | 列名          | 最小宽度 | 判多重 | 没通过时说什么
   V1_1 | column | fp_admin              | token_version |          | fail | fp_admin 缺 token_version 列 —— 补跑 V1_1，漏了后端根本起不来
-  V1_2 | width  | fp_admin              | password      | 255      | warn | fp_admin.password 不够宽（要 ≥255）—— bcrypt 是 60 字符暂时还装得下，不会当场出故障，但请补跑 V1_2
-  V1_2 | width  | fp_merchant           | password      | 255      | warn | fp_merchant.password 不够宽（要 ≥255）—— 同上，请补跑 V1_2
+  V1_1 | width  | fp_admin              | username      | 100      | fail | fp_admin.username 不够宽（要 ≥100）—— 补跑 V1_1，漏了邮箱格式的管理员账号存不进去
+  V1_2 | width  | fp_admin              | password      | 255      | fail | fp_admin.password 不够宽（要 ≥255）—— 补跑 V1_2，漏了以后换更长的加密算法会写不进去，而且说明这个库不在预期状态
+  V1_2 | width  | fp_merchant           | password      | 255      | fail | fp_merchant.password 不够宽（要 ≥255）—— 补跑 V1_2，同上
   V1_3 | column | fp_pay_order          | notify_result |          | fail | fp_pay_order 缺 notify_result 列 —— 补跑 V1_3，漏了谁点开订单详情或订单列表都会报错
   V1_3 | column | fp_pay_order          | notify_error  |          | fail | fp_pay_order 缺 notify_error 列 —— 补跑 V1_3，同上
   V1_4 | table  | fp_pending_pay_amount |               |          | fail | 缺 fp_pending_pay_amount 表 —— 补跑 V1_4，漏了那个「两人同价撞单认错人」的赔钱 bug 原样还在
