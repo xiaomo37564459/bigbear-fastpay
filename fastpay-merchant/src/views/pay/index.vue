@@ -225,7 +225,6 @@ const connectWebSocket = (merchantNo, outTradeNo) => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.host
   const wsUrl = `${protocol}//${host}/fastpay-server/ws/pay/${merchantNo}/${outTradeNo}`
-  //const wsUrl = `${protocol}//81.68.216.232/fastpay-server/ws/pay/${merchantNo}/${outTradeNo}`
 
   console.log('WebSocket URL:', wsUrl)
   
