@@ -327,8 +327,10 @@ ssh root@150.158.99.251 '
   chown fastpay:fastpay /opt/fastpay/DEPLOYED_VERSION
 '
 
-# 5. 验一下（第 2 个参数就是你的锁令牌，脚本会顺便确认没有别人在同时动这台机器）
-ssh root@150.158.99.251 'bash -s v1.6.0 MTM-210' < deploy/verify-release.sh
+# 5. 验一下（第 2 个参数是你的锁令牌，脚本会顺便确认没有别人在同时动这台机器；
+#    第 3 个参数 prod 是告诉脚本「这台是生产」—— 这台机器万一没装操作锁、或者你手上
+#    没锁而别人正占着锁，它会直接判失败，而不是只提醒一句就放过去。动生产时别省这个参数）
+ssh root@150.158.99.251 'bash -s v1.6.0 MTM-210 prod' < deploy/verify-release.sh
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-admin/
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merchant/
 
@@ -554,7 +556,7 @@ ssh root@150.158.99.251 '
 **验完再放锁**，别验之前就放：
 
 ```bash
-ssh root@150.158.99.251 'bash -s <退回到的版本> MTM-210' < deploy/verify-release.sh
+ssh root@150.158.99.251 'bash -s <退回到的版本> MTM-210 prod' < deploy/verify-release.sh
 
 ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 ```
