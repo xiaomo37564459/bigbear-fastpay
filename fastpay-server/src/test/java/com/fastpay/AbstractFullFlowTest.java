@@ -165,6 +165,10 @@ abstract class AbstractFullFlowTest {
         assertThat(merchantId).isPositive();
         assertThat(merchantNo).isNotBlank();
         assertThat(merchantApiSecret).isNotBlank();
+        // MTM-186：新建商户接口不许把密码字段（无论明文还是密文）再吐回给调用方
+        assertThat(merchant.has("password"))
+                .as("新建商户接口返回体不能带 password 字段")
+                .isFalse();
 
         JsonNode loginData = dataOf(postJson("/api/merchant/login", null,
                 Map.of("username", MERCHANT_USERNAME, "password", MERCHANT_PASSWORD)));
