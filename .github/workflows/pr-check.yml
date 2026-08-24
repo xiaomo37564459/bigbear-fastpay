@@ -210,7 +210,9 @@ jobs:
           FAILED=""
           [ "${BACKEND_RESULT}"  = "success" ] || FAILED="${FAILED} 后端 fastpay-server；"
           [ "${FRONTEND_RESULT}" = "success" ] || FAILED="${FAILED} 前端 fastpay-admin / fastpay-merchant；"
-          [ "${DEPLOY_RESULT}"   = "success" ] || FAILED="${FAILED} 发版验证脚本 deploy/verify-release.sh 的自测；"
+          # 这一格里跑了两个脚本的自测，所以提示得同时提两个 —— 只提发版验证的话，
+          # 挂的要是操作锁那个，人会被指到错的文件上（MTM-220）
+          [ "${DEPLOY_RESULT}"   = "success" ] || FAILED="${FAILED} 运维脚本自测（发版验证 deploy/verify-release.sh、生产操作锁 deploy/prod-lock.sh）；"
 
           if [ -z "${FAILED}" ]; then
             say "## ✅ 通过：把今天最新的主干合进来之后，全部测试都是绿的"

@@ -273,8 +273,9 @@ set_lock() {
 install_lock_sh()   { printf '#!/bin/sh\nexit 0\n' > "$LOCK_OPS/prod-lock.sh"; chmod 755 "$LOCK_OPS/prod-lock.sh"; }
 uninstall_lock_sh() { rm -f "$LOCK_OPS/prod-lock.sh"; }
 
-run_lock() { # run_lock <传给脚本的令牌>
+run_lock() { # run_lock <传给脚本的令牌> [第 3 个参数：这台机器是不是生产]
   LOCK_TOKEN="${1:-}"
+  ENV_DECL="${2:-}"
   PASS_N=0; FAIL_N=0; WARN_N=0
   eval "$LOCK_SRC" 2>&1
   # 计数必须在这里打出来：调用方是 O=$(run_lock ...)，那是个子 shell，
@@ -311,12 +312,54 @@ set_lock ''
 O=$(run_lock '')
 has   "没传令牌且没人占锁：判 PASS"          '✅ PASS'                  "$O"
 
+echo
+echo "===== 十之二、机器上没装锁脚本：说了是生产就判 FAIL，没说才只提醒（MTM-220）====="
+# 原来不管什么环境都只提醒一句。老机器、老流程不被硬卡住是好事，但代价是：
+# 万一哪天有人漏装了锁脚本，这层保护就悄悄失效了，而失效是没有任何动静的。
+# 折中办法（MTM-220 选的 C）：只有明说了「这是生产」才判死，其余照旧只提醒。
 uninstall_lock_sh
 set_lock ''
+
 O=$(run_lock MTM-210)
-has   "锁脚本没装：提醒去装"                 '还没装操作锁'              "$O"
-hasnt "锁脚本没装：不冒充成 PASS"            '✅ PASS'                  "$O"
+has   "没说环境：提醒去装"                    '还没装操作锁'             "$O"
+hasnt "没说环境：不冒充成 PASS"               '✅ PASS'                  "$O"
+hasnt "没说环境：不判 FAIL（老写法照样能跑）"  '❌ FAIL'                  "$O"
+has   "没说环境：只记一条「注意」"             'COUNTS:PASS=0,FAIL=0,WARN=1' "$O"
+
+O=$(run_lock MTM-210 prod)
+has   "说了是生产：判 FAIL"                   '❌ FAIL'                  "$O"
+has   "说了是生产：说清楚是因为没装锁"          '还没装操作锁'             "$O"
+has   "说了是生产：只判了一条 FAIL"            'COUNTS:PASS=0,FAIL=1'     "$O"
+hasnt "说了是生产：不许还冒充成 PASS"          '✅ PASS'                  "$O"
+
+O=$(run_lock MTM-210 PROD)
+has   "大写 PROD 也算生产"                    '❌ FAIL'                  "$O"
+O=$(run_lock MTM-210 生产)
+has   "中文「生产」也算生产"                   '❌ FAIL'                  "$O"
+
+O=$(run_lock MTM-210 staging)
+hasnt "明说了不是生产：不判 FAIL"              '❌ FAIL'                  "$O"
+has   "明说了不是生产：还是提醒一句"            '还没装操作锁'             "$O"
+
+# 这几条盯的是「把 prod 拼错了」。拼错要是被当成「没说」放过去，人以为自己开了严格模式，
+# 实际上没开 —— 保护失效了却一点动静都没有，正是这一段最怕的错法。
+O=$(run_lock MTM-210 prd)
+has   "环境值拼错：判 FAIL"                   '❌ FAIL'                  "$O"
+has   "环境值拼错：把写错的值原样指出来"        'prd'                      "$O"
+has   "环境值拼错：只判了一条 FAIL"            'COUNTS:PASS=0,FAIL=1'     "$O"
+hasnt "环境值拼错：绝不许当成没说放过去"        '⚠️'                       "$O"
+
 install_lock_sh
+
+# 锁脚本装好的情况下，第 3 个参数不该改变原来任何一条判定 —— 这几条是防回归的
+set_lock MTM-157 "另一路"
+O=$(run_lock MTM-210 prod)
+has   "锁装好了+生产+锁在别人手上：照样判 FAIL" '❌ FAIL'                  "$O"
+has   "锁装好了+生产+锁在别人手上：只判一条"    'COUNTS:PASS=0,FAIL=1'     "$O"
+set_lock MTM-210 "梁运｜运维"
+O=$(run_lock MTM-210 prod)
+has   "锁装好了+生产+锁在自己手上：照样判 PASS" '✅ PASS'                  "$O"
+has   "锁装好了+生产+锁在自己手上：只判一条"    'COUNTS:PASS=1,FAIL=0'     "$O"
 
 echo
 echo "===== 十一、脚本本身 ====="
