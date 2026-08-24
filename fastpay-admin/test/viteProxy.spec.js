@@ -2,7 +2,7 @@
 // 这个文件要用 vite 自己的加载器读配置，底层依赖 esbuild，
 // 而 esbuild 在 jsdom 环境里跑不起来（jsdom 的 TextEncoder 不是原生 Uint8Array），
 // 所以单独指定用 node 环境跑。
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { resolve, dirname } from 'path'
@@ -32,6 +32,15 @@ const loadProxy = async () => {
 
 describe('管理后台 - 开发环境接口转发地址', () => {
   let savedProxyEnv
+
+  // 第一次读配置最贵：要现场用 esbuild 把 vite 配置打一次包，再把配置里引用的
+  // 那几个插件整个加载进来，机器忙的时候能花掉十几秒；之后再读就走缓存，不到 1 秒。
+  // 这十几秒原来是算在第一条用例头上的，于是它一挤就超时变红。
+  // 现在把这一次「冷启动」挪到准备阶段（准备阶段的时间上限单独给到 60 秒），
+  // 用例本身量到的就只是真正要测的那一小段。
+  beforeAll(async () => {
+    await loadProxy()
+  })
 
   beforeEach(() => {
     savedProxyEnv = process.env.VITE_API_PROXY
