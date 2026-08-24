@@ -89,7 +89,12 @@
             </el-button>
           </el-form-item>
         </el-form>
-        
+
+        <!-- 登录失败提示（MTM-162 登录限次）：
+             后端在密码错时会附上「还可以尝试 X 次」，在被锁时给出「请 X 分钟后再试」；
+             这里做成常驻的红字提示，不像 toast 3 秒就消失，方便真的输错的商户看清楚。 -->
+        <div v-if="loginError" class="login-error-hint">{{ loginError }}</div>
+
         <div class="login-footer">
           <p>还没有账号？请联系管理员开通</p>
         </div>
@@ -123,13 +128,18 @@ const rules = {
 
 const loading = ref(false)
 
+// 登录失败常驻提示（MTM-162）：把后端的「还剩几次 / 请 X 分钟后再试」在表单下方持续显示，
+// 商户不用去追那闪三秒就消失的顶部 toast。
+const loginError = ref('')
+
 const handleLogin = async () => {
   if (!formRef.value) return
-  
+
   await formRef.value.validate(async (valid) => {
     if (!valid) return
-    
+
     loading.value = true
+    loginError.value = ''
     try {
       const res = await login(formData)
       localStorage.setItem('merchant_token', res.data.token)
@@ -137,6 +147,7 @@ const handleLogin = async () => {
       ElMessage.success('登录成功')
       router.push('/console/dashboard')
     } catch (error) {
+      loginError.value = error?.message || '登录失败，请稍后再试'
       console.error('登录失败:', error)
     } finally {
       loading.value = false
@@ -144,3 +155,19 @@ const handleLogin = async () => {
   })
 }
 </script>
+
+<style scoped>
+/* 登录失败常驻提示（MTM-162）：toast 三秒就没了，这里在表单下方长期挂着 */
+.login-error-hint {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+  word-break: break-word;
+}
+</style>

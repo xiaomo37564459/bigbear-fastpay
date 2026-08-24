@@ -227,6 +227,27 @@ CREATE TABLE `fp_unmatched_notify` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='未匹配收款通知 - 钱到了但认不到订单的记录';
 
 -- =====================================================
+-- 9. 登录失败次数记录表 (fp_login_attempt) —— MTM-162
+-- 说明：登录限次的持久化状态，服务重启后失败次数不清零
+-- =====================================================
+DROP TABLE IF EXISTS `fp_login_attempt`;
+CREATE TABLE `fp_login_attempt` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `scope` VARCHAR(20) NOT NULL COMMENT '作用域：admin-管理后台，merchant-商户后台',
+    `identity_key` VARCHAR(200) NOT NULL COMMENT '钥匙标识：账号名归一化（trim+lowercase），或 "ip:" 前缀 + IP',
+    `key_type` VARCHAR(10) NOT NULL COMMENT '钥匙类型：user-账号维度，ip-IP维度',
+    `fail_count` INT NOT NULL DEFAULT 0 COMMENT '当前失败累计次数；成功登录后清零',
+    `first_failed_at` DATETIME DEFAULT NULL COMMENT '本次统计窗口第一次失败时间',
+    `last_failed_at` DATETIME DEFAULT NULL COMMENT '最近一次失败时间',
+    `locked_until` DATETIME DEFAULT NULL COMMENT '锁定截止时间；为 NULL 或 <= now 视为未锁',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_scope_identity` (`scope`, `identity_key`),
+    KEY `idx_scope_locked_until` (`scope`, `locked_until`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='登录失败次数记录 - MTM-162 登录限次的持久化状态';
+
+-- =====================================================
 -- 初始化数据
 -- =====================================================
 --
@@ -252,6 +273,7 @@ CREATE TABLE `fp_unmatched_notify` (
 -- 6. fp_pay_order    - 支付订单表，存储所有支付订单记录
 -- 7. fp_pending_pay_amount - 待支付金额占位表，保证同商户同支付方式下未支付订单的 pay_amount 唯一
 -- 8. fp_unmatched_notify   - 未匹配收款通知表，钱到了但认不到订单的记录
+-- 9. fp_login_attempt      - 登录失败次数记录表，MTM-162 登录限次的持久化状态
 --
 -- 关系说明：
 -- - 一个商户(merchant)可以有多个店铺(shop)

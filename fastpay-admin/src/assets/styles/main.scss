@@ -469,4 +469,18 @@ html, body, #app {
       }
     }
   }
+
+  // 登录失败常驻提示（MTM-162）：toast 三秒就没了，这里在表单下方长期挂着
+  .login-error-hint {
+    margin-top: 4px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    font-size: 14px;
+    line-height: 1.5;
+    text-align: center;
+    word-break: break-word;
+  }
 }

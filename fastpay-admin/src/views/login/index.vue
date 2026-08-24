@@ -62,7 +62,11 @@
           </el-button>
         </el-form-item>
       </el-form>
-      
+
+      <!-- 登录失败提示（MTM-162 登录限次）：
+           后端在密码错时会附上「还可以尝试 X 次」，在被锁时给出「请 X 分钟后再试」；
+           这里做成常驻的红字提示，不像 toast 3 秒就消失，方便真的输错的人看清楚。 -->
+      <div v-if="loginError" class="login-error-hint">{{ loginError }}</div>
     </div>
   </div>
 </template>
@@ -95,14 +99,19 @@ const rules = {
 // 加载状态
 const loading = ref(false)
 
+// 登录失败常驻提示（MTM-162）：把后端的「还剩几次 / 请 X 分钟后再试」在表单下方持续显示，
+// 用户不用去追那闪三秒就消失的顶部 toast。
+const loginError = ref('')
+
 // 登录处理
 const handleLogin = async () => {
   if (!formRef.value) return
-  
+
   await formRef.value.validate(async (valid) => {
     if (!valid) return
-    
+
     loading.value = true
+    loginError.value = ''
     try {
       const res = await login(formState)
       // 保存 Token 和用户信息
@@ -111,6 +120,10 @@ const handleLogin = async () => {
       ElMessage.success('登录成功')
       router.push('/dashboard')
     } catch (error) {
+      // request.js 已经在 toast 上报过一次；这里再钉在表单下方留着，MTM-162 要求「明确提示」。
+      // 走 axios 分支（后端返回非 200）能拿到 response.data.message；
+      // 网络层报错（超时/断网）保底显示 error.message，避免空提示。
+      loginError.value = error?.message || '登录失败，请稍后再试'
       console.error('登录失败:', error)
     } finally {
       loading.value = false

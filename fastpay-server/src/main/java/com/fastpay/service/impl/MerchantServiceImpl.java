@@ -15,6 +15,7 @@ import com.fastpay.mapper.MerchantMapper;
 import com.fastpay.mapper.PayOrderMapper;
 import com.fastpay.mapper.PayQrcodeMapper;
 import com.fastpay.mapper.ShopMapper;
+import com.fastpay.service.LoginLimitService;
 import com.fastpay.service.MerchantService;
 import com.fastpay.util.JwtUtil;
 import com.fastpay.util.PasswordHasher;
@@ -42,28 +43,37 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
     private final ShopMapper shopMapper;
     private final PayQrcodeMapper payQrcodeMapper;
     private final PayOrderMapper payOrderMapper;
+    private final LoginLimitService loginLimitService;
 
     public MerchantServiceImpl(JwtUtil jwtUtil, ShopMapper shopMapper,
-                               PayQrcodeMapper payQrcodeMapper, PayOrderMapper payOrderMapper) {
+                               PayQrcodeMapper payQrcodeMapper, PayOrderMapper payOrderMapper,
+                               LoginLimitService loginLimitService) {
         this.jwtUtil = jwtUtil;
         this.shopMapper = shopMapper;
         this.payQrcodeMapper = payQrcodeMapper;
         this.payOrderMapper = payOrderMapper;
+        this.loginLimitService = loginLimitService;
     }
 
     @Override
     public LoginVO login(LoginDTO dto, String ip) {
+        // 登录限次（MTM-162）：跟管理后台共用一份实现，商户端 scope=merchant，独立计数
+        loginLimitService.assertNotLocked(LoginLimitService.SCOPE_MERCHANT, dto.getUsername(), ip);
+
         // 查询商户
         Merchant merchant = this.getOne(new LambdaQueryWrapper<Merchant>()
                 .eq(Merchant::getUsername, dto.getUsername()));
 
+        // 账号不存在也要计入限次，否则攻击者可以先枚举账号再攻密码
         if (merchant == null) {
-            throw new BusinessException("用户名或密码错误");
+            int remaining = loginLimitService.registerFailure(LoginLimitService.SCOPE_MERCHANT, dto.getUsername(), ip);
+            throw new BusinessException(buildInvalidCredentialMessage(remaining));
         }
 
         // 验证密码：兼容库里遗留的老格式（无盐 MD5）和新格式（bcrypt）
         if (!PasswordHasher.matches(dto.getPassword(), merchant.getPassword())) {
-            throw new BusinessException("用户名或密码错误");
+            int remaining = loginLimitService.registerFailure(LoginLimitService.SCOPE_MERCHANT, dto.getUsername(), ip);
+            throw new BusinessException(buildInvalidCredentialMessage(remaining));
         }
 
         // 检查状态
@@ -73,6 +83,9 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
         if (Constants.Status.PENDING.equals(merchant.getStatus())) {
             throw new BusinessException("账号待审核，请联系管理员");
         }
+
+        // 密码正确、状态正常 —— 清零两把钥匙
+        loginLimitService.registerSuccess(LoginLimitService.SCOPE_MERCHANT, dto.getUsername(), ip);
 
         // 老格式账号顺手升级成 bcrypt：商户完全无感，一次登录后这条记录就再也不是 MD5 了
         if (PasswordHasher.isLegacy(merchant.getPassword())) {
@@ -100,6 +113,16 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
         vo.setApiKey(merchant.getApiKey());
 
         return vo;
+    }
+
+    /**
+     * 登录失败的提示语：附上账号维度剩余次数，让真的输错的商户知道「再错几次要被锁」。
+     */
+    private String buildInvalidCredentialMessage(int remaining) {
+        if (remaining <= 0) {
+            return "用户名或密码错误";
+        }
+        return "用户名或密码错误，还可以尝试 " + remaining + " 次";
     }
 
     @Override

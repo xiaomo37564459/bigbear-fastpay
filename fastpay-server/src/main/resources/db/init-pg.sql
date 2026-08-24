@@ -344,6 +344,35 @@ COMMENT ON COLUMN fp_unmatched_notify.raw_message IS '原始通知内容（title
 COMMENT ON COLUMN fp_unmatched_notify.handled_order_no IS '人工对应到的平台订单号';
 
 -- =====================================================
+-- 9. 登录失败次数记录表 (fp_login_attempt) —— MTM-162
+-- 说明：登录限次的持久化状态，服务重启后失败次数不清零
+-- =====================================================
+DROP TABLE IF EXISTS fp_login_attempt;
+CREATE TABLE fp_login_attempt (
+    id BIGSERIAL PRIMARY KEY,
+    scope VARCHAR(20) NOT NULL,
+    identity_key VARCHAR(200) NOT NULL,
+    key_type VARCHAR(10) NOT NULL,
+    fail_count INT NOT NULL DEFAULT 0,
+    first_failed_at TIMESTAMP DEFAULT NULL,
+    last_failed_at TIMESTAMP DEFAULT NULL,
+    locked_until TIMESTAMP DEFAULT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_login_attempt_scope_identity UNIQUE (scope, identity_key)
+);
+CREATE INDEX idx_login_attempt_scope_locked_until ON fp_login_attempt (scope, locked_until);
+
+COMMENT ON TABLE fp_login_attempt IS '登录失败次数记录 - MTM-162 登录限次的持久化状态';
+COMMENT ON COLUMN fp_login_attempt.scope IS '作用域：admin-管理后台，merchant-商户后台';
+COMMENT ON COLUMN fp_login_attempt.identity_key IS '钥匙标识：账号名归一化（trim+lowercase），或 "ip:" 前缀 + IP';
+COMMENT ON COLUMN fp_login_attempt.key_type IS '钥匙类型：user-账号维度，ip-IP维度';
+COMMENT ON COLUMN fp_login_attempt.fail_count IS '当前失败累计次数；成功登录后清零';
+COMMENT ON COLUMN fp_login_attempt.first_failed_at IS '本次统计窗口第一次失败时间';
+COMMENT ON COLUMN fp_login_attempt.last_failed_at IS '最近一次失败时间';
+COMMENT ON COLUMN fp_login_attempt.locked_until IS '锁定截止时间；为 NULL 或 <= now 视为未锁';
+
+-- =====================================================
 -- 初始化数据
 -- =====================================================
 --
