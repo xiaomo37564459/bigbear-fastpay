@@ -1101,7 +1101,7 @@ curl -X PUT https://your-domain.com/fastpay-server/api/merchant/callback-config 
 
 ### 7.5 `GET /api/merchant/info` —— 查自己的商户信息
 
-**返回**：`data` 是完整商户信息，含 `merchantNo`、`apiKey`、`apiSecret`、`notifyUrl`、`returnUrl`、`status` 等（`password` 字段被置空）。**接入用的商户号和密钥就是从这里来的。**
+**返回**：`data` 是完整商户信息，含 `merchantNo`、`apiKey`、`apiSecret`、`notifyUrl`、`returnUrl`、`status` 等（返回体里不再包含 `password` 字段——密码字段无论加没加密都不会从任何接口回吐）。**接入用的商户号和密钥就是从这里来的。**
 
 ---
 

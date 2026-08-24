@@ -210,7 +210,9 @@ class DocsApiWalkthroughTest {
         JsonNode info = dataOf(getJson("/api/merchant/info", merchantToken));
         assertThat(info.get("merchantNo").asText()).isEqualTo(merchantNo);
         assertThat(info.get("apiSecret").asText()).isEqualTo(apiSecret);
-        assertThat(info.get("password").isNull()).as("文档说 password 字段被置空").isTrue();
+        // MTM-186：password 字段从所有接口彻底移除（无论加没加密都不该回吐），
+        // 不再是「字段在、值是空」；文档 7.5 已同步改为「返回体里不再包含 password 字段」
+        assertThat(info.has("password")).as("文档承诺 password 字段不再返回").isFalse();
     }
 
     @Test
