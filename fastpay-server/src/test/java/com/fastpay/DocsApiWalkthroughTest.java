@@ -271,8 +271,12 @@ class DocsApiWalkthroughTest {
         assertThat(data.get("payMethod").asText()).isEqualTo("api");
         assertThat(data.get("qrcodeUrl").asText()).isNotBlank();
         assertThat(data.get("payPageUrl").isNull()).as("文档说这个接口的 payPageUrl 固定为 null").isTrue();
-        assertThat(data.get("expireTime").isNumber()).as("文档说是秒级时间戳（数字）").isTrue();
-        assertThat(data.get("expireTime").asLong()).isBetween(1_000_000_000L, 9_999_999_999L);
+        // MTM-176：下单接口的 expireTime 已和查询接口统一为 ISO-8601 时间字符串（带 T、可能带小数秒）
+        assertThat(data.get("expireTime").isTextual())
+                .as("文档说 expireTime 是 ISO-8601 时间字符串，和 /api/pay/query 统一")
+                .isTrue();
+        assertThat(data.get("expireTime").asText())
+                .matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?");
     }
 
     @Test

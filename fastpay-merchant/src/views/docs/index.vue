@@ -689,7 +689,7 @@ const apiPayResponse = [
   { name: 'data.amount', type: 'BigDecimal', desc: '订单金额' },
   { name: 'data.payType', type: 'String', desc: '支付类型' },
   { name: 'data.qrcodeUrl', type: 'String', desc: '收款二维码内容（用于生成二维码图片）' },
-  { name: 'data.expireTime', type: 'Long', desc: '订单过期时间（时间戳，秒）' }
+  { name: 'data.expireTime', type: 'String', desc: '订单过期时间，ISO-8601 字符串（例：2026-08-19T12:03:00.422774），和查询接口同格式' }
 ]
 
 // 查询订单参数

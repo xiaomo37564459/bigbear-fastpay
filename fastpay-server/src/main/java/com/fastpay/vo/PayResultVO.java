@@ -3,6 +3,7 @@ package com.fastpay.vo;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 /**
  * 支付结果 VO
@@ -54,7 +55,8 @@ public class PayResultVO {
     private String payPageUrl;
 
     /**
-     * 订单过期时间（时间戳，秒）
+     * 订单过期时间（ISO-8601 时间字符串，和查询接口 {@code /api/pay/query} 统一）。
+     * MTM-176：原本这里是秒级时间戳（Long），跟查询接口的字符串对不上，接入方每次都得写两套解析代码。
      */
-    private Long expireTime;
+    private LocalDateTime expireTime;
 }
