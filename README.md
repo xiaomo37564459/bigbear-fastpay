@@ -520,7 +520,7 @@ mvn spring-boot:run
 | `/api/pay/result/{orderNo}` | GET | 否 | 支付结果页数据 |
 | `/ws/pay/{merchantNo}/{outTradeNo}` | WS | 否 | 支付结果实时推送 |
 | `/submit.php` | GET/POST | 易支付 | 易支付页面跳转下单 |
-| `/mapi.php` | POST | 易支付 | 易支付 API 下单，返回 JSON |
+| `/mapi.php` | GET/POST | 易支付 | 易支付 API 下单，返回 JSON |
 | `/api.php?act=order` | GET/POST | 易支付 | 易支付查订单 |
 | `/api.php?act=refund` | GET/POST | —— | 退款占位，本期返回「未实现」 |
 | `/api/notify/callback` | POST | HmacSHA256 | 监听软件上报到账（平台内部用） |

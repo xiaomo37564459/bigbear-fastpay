@@ -74,10 +74,12 @@ describe('易支付章节的数据：必须和后端实现对得上', () => {
     expect(paths).toContain('/api.php?act=order')
 
     const byPath = Object.fromEntries(epayEndpoints.map((e) => [e.path, e]))
-    // 后端 EpayGatewayController：submit.php 收 GET/POST，mapi.php 只收 POST
+    // 后端 EpayGatewayController：三个入口都收 GET/POST（MTM-212 起 mapi.php 也收 GET，
+    // 否则对方用 GET 探测只会看到「系统繁忙」，不知道是自己的问题）
     expect(byPath['/submit.php'].method).toMatch(/GET/)
     expect(byPath['/submit.php'].method).toMatch(/POST/)
-    expect(byPath['/mapi.php'].method).toBe('POST')
+    expect(byPath['/mapi.php'].method).toMatch(/GET/)
+    expect(byPath['/mapi.php'].method).toMatch(/POST/)
     expect(byPath['/api.php?act=order'].method).toMatch(/GET/)
   })
 

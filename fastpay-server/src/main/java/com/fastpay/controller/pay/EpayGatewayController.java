@@ -15,7 +15,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
-import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -35,7 +34,7 @@ import java.util.TreeMap;
  *
  * 三个入口：
  * - GET/POST /submit.php  用户扫码前的页面跳转入口
- * - POST     /mapi.php    API 下单入口，返回 JSON
+ * - GET/POST /mapi.php    API 下单入口，返回 JSON
  * - GET      /api.php?act=order  查询订单状态
  *
  * 路径解释：Spring Boot 里 server.servlet.context-path=/fastpay-server，
@@ -80,9 +79,15 @@ public class EpayGatewayController {
 
     /**
      * API 下单：返回 JSON。彩虹易支付协议里 code=1 表示成功
+     *
+     * GET/POST 都收（和 /submit.php、/api.php 口径一致）：之前只收 POST，对接方用 GET
+     * 探测（curl 不带 -X POST 默认就是 GET）会撞上「请求方式不支持」，被全局兜底翻译成
+     * 「系统繁忙，请稍后重试」，对方还以为是平台挂了。收 GET 之后参数缺了会走和 POST
+     * 同一套校验，明确告诉对方缺哪个参数。
      */
     @Operation(summary = "易支付-API下单", description = "彩虹易支付通用协议 /mapi.php 入口")
-    @PostMapping("/mapi.php")
+    @RequestMapping(value = "/mapi.php", method = {org.springframework.web.bind.annotation.RequestMethod.GET,
+            org.springframework.web.bind.annotation.RequestMethod.POST})
     @ResponseBody
     public Map<String, Object> mapi(HttpServletRequest request) {
         Map<String, String> params = collectParams(request);

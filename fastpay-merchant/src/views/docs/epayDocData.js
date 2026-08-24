@@ -43,7 +43,7 @@ export const epayEndpoints = [
   },
   {
     path: '/mapi.php',
-    method: 'POST',
+    method: 'GET / POST',
     desc: '接口下单。对方系统的后端调用，返回 JSON，里面带收款链接和二维码内容'
   },
   {
