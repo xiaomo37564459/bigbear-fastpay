@@ -119,7 +119,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 ### 5.1 首页
 
-访问 http://localhost:8080 进入演示首页，可选择：
+访问 http://localhost:7002 进入演示首页，可选择：
 
 - **页面跳转支付**：适用于网站接入
 - **API 接口支付**：适用于 APP 或自定义页面
@@ -136,7 +136,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 #### 演示步骤
 
-1. 访问 http://localhost:8080/page-pay
+1. 访问 http://localhost:7002/page-pay
 2. 填写订单信息：
    - 订单金额：如 `0.01`
    - 商品名称：如 `测试商品`
@@ -159,7 +159,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 #### 演示步骤
 
-1. 访问 http://localhost:8080/api-pay
+1. 访问 http://localhost:7002/api-pay
 2. 填写订单信息：
    - 订单金额：如 `0.01`
    - 商品名称：如 `测试商品`
@@ -614,7 +614,7 @@ public String handleNotify(@RequestParam Map<String, Object> params) {
 使用 ngrok 等工具将本地服务暴露到外网：
 
 ```bash
-ngrok http 8080
+ngrok http 7002
 ```
 
 将生成的外网地址配置为 notify-url。

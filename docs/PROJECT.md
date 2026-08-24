@@ -187,9 +187,10 @@ bigbear-fastpay/
 │   │       └── PayWebSocketHandler.java  # 支付结果推送
 │   │
 │   └── src/main/resources/
-│       ├── db/                  # 数据库脚本
-│       │   └── init.sql         # 初始化脚本
-│       └── application.yml      # 配置文件
+│       ├── db/                          # 数据库脚本
+│       │   └── init.sql                 # 初始化脚本
+│       ├── application-dev.yml          # 开发环境配置（本地跑用这份）
+│       └── application-prod.yml         # 生产环境配置（部署时由环境变量注入真实值）
 │
 ├── fastpay-admin/               # 管理后台 (Vue3 + Element Plus)
 │   ├── src/
@@ -236,8 +237,9 @@ bigbear-fastpay/
 │   │   ├── service/             # 服务层
 │   │   └── util/                # 工具类
 │   └── src/main/resources/
-│       ├── templates/           # Thymeleaf 模板
-│       └── application.yml      # 配置文件
+│       ├── templates/                   # Thymeleaf 模板
+│       ├── application-dev.yml          # 开发环境配置（本地跑用这份）
+│       └── application-prod.yml         # 生产环境配置（部署时由环境变量注入真实值）
 │
 └── README.md                    # 项目说明
 ```

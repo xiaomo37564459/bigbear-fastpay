@@ -366,8 +366,9 @@ bigbear-fastpay/
 │       │   ├── service/         # 支付服务
 │       │   └── util/            # 签名工具
 │       └── main/resources/
-│           ├── templates/       # 页面模板
-│           └── application.yml  # 配置文件
+│           ├── templates/               # 页面模板
+│           ├── application-dev.yml      # 开发环境配置（本地跑用这份）
+│           └── application-prod.yml     # 生产环境配置（部署时由环境变量注入真实值）
 │
 └── imags/                       # 项目截图
 ```
