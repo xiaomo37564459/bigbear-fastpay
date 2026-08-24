@@ -565,7 +565,7 @@ mvn spring-boot:run
     "payMethod": "api",
     "qrcodeUrl": "weixin://wxpay/bizpayurl?pr=xxxxxxxx",
     "payPageUrl": null,
-    "expireTime": 1755561780
+    "expireTime": "2026-08-19T12:03:00.422774"
   },
   "timestamp": 1755561600123
 }
