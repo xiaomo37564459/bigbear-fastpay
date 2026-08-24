@@ -166,7 +166,27 @@ else F=$((F+1)); printf '  ❌ env 读不到却认出了主机名 [%s]\n' "$DB_H
 
 echo
 echo "===== 六、数据库：没装 psql 客户端不能谎报「连得上」====="
-try_db() { PASS_N=0; FAIL_N=0; WARN_N=0; DB_OUT="$1"; eval "$DB_SRC" 2>&1; }
+# 第二个参数是这台机器连的数据库类型，不传就当 PostgreSQL（生产用的就是它）。
+try_db() { PASS_N=0; FAIL_N=0; WARN_N=0; DB_OUT="$1"; DB_KIND="${2:-postgresql}"; eval "$DB_SRC" 2>&1; }
+
+# 一份「V1_1 到 V1_5 全跑过」的完整查询结果，当作下面所有用例的底板。
+# 要测「漏跑某一项」就从这份底板上删掉对应的行，而不是另手写一份短的 ——
+# 手写短的那种写法，等哪天再加一个检查项，老用例会悄悄变成「几乎什么都没跑」，
+# 却还顶着「原来该过的还得过」的名字，看上去一切正常。（MTM-215）
+DB_ALL_OK='username=64
+password=255
+token_version=n/a
+merchant_password=255
+notify_result=1000
+notify_error=500
+table=fp_pending_pay_amount
+table=fp_unmatched_notify
+order_notify_url=2000
+order_return_url=2000
+merchant_notify_url=2000
+merchant_return_url=2000'
+# without <正则> —— 从底板里抽掉匹配的行，模拟「这一项没跑」
+without() { printf '%s\n' "$DB_ALL_OK" | grep -v "$1"; }
 O=$(try_db 'bash: psql: command not found')
 has   "判 FAIL"                           '❌ FAIL'                  "$O"
 hasnt "绝不能说「数据库连得上」"           '数据库连得上'             "$O"
@@ -215,23 +235,98 @@ reason 'psql: error: something nobody has seen before' '原因不明'
 
 echo
 echo "===== 八、回归：原来该过的还得过 ====="
-O=$(try_db 'username=64
-password=255
-token_version=n/a
-merchant_password=255')
+O=$(try_db "$DB_ALL_OK")
 has   "连得上"                            'PASS  数据库连得上'       "$O"
 has   "V1_1 判定还在"                     'V1_1 已生效'              "$O"
 has   "V1_2 判定还在"                     'V1_2 已生效'              "$O"
+has   "V1_3 判定在"                       'V1_3 已生效'              "$O"
+has   "V1_4 判定在"                       'V1_4 已生效'              "$O"
+has   "V1_5 判定在"                       'V1_5 已生效'              "$O"
 hasnt "没有误报 FAIL"                     '❌ FAIL'                  "$O"
 
-O=$(try_db 'username=64
-password=60
-merchant_password=60')
+O=$(try_db "$(without '^token_version=' | sed -e 's/^password=255/password=60/' -e 's/^merchant_password=255/merchant_password=60/')")
 has   "缺 token_version 查得出来"          'V1_1 没生效'              "$O"
 has   "password 太窄会提醒"                'V1_2 可能没跑'            "$O"
 
 O=$(try_db 'PARSE_FAIL')
 has   "DB_URL 格式不对仍判 FAIL"           'DB_URL 格式不对'          "$O"
+
+echo
+echo "===== 八之二、数据库：迁移漏跑必须报红，不能只是提醒（MTM-215）====="
+# 这一段守的是这条脚本存在的理由：**漏跑迁移，它必须报红**。
+# 之前 V1_3 / V1_4 压根没查，漏跑照样全绿 —— 而线上正好停在 V1_2，
+# 下次上线 V1_3 / V1_4 两个都得补跑，恰恰全落在没查的那两项上。
+#
+# 下面每一条都是「除了这一项，别的都跑过了」，所以任何一条变绿，
+# 都说明那一项的检查被人拿掉了或者写歪了。
+
+# —— 线上现在的真实状态：停在 V1_2，后面三个都没跑
+O=$(try_db 'username=64
+password=255
+token_version=n/a
+merchant_password=255')
+has   "停在 V1_2：V1_3 判 FAIL"            'FAIL  V1_3 没生效'        "$O"
+has   "停在 V1_2：V1_4 判 FAIL"            'FAIL  V1_4 没生效'        "$O"
+has   "停在 V1_2：V1_5 判 FAIL"            'FAIL  V1_5 没生效'        "$O"
+hasnt "已经跑过的 V1_1 不许被连累"          'V1_1 没生效'              "$O"
+has   "还是认得出库是连得上的"              'PASS  数据库连得上'       "$O"
+
+# —— V1_3：两列缺任意一列都要红
+O=$(try_db "$(without '^notify_result=')")
+has   "V1_3 缺 notify_result：判 FAIL"     'FAIL  V1_3 没生效'        "$O"
+has   "指名道姓说缺哪一列"                  'notify_result'            "$O"
+has   "顺便说清漏跑的后果"                  '回调失败原因'             "$O"
+hasnt "别的迁移项不受连累"                  'V1_4 没生效'              "$O"
+O=$(try_db "$(without '^notify_error=')")
+has   "V1_3 缺 notify_error：判 FAIL"      'FAIL  V1_3 没生效'        "$O"
+
+# —— V1_4：两张表缺任意一张都要红
+O=$(try_db "$(without '^table=fp_pending_pay_amount$')")
+has   "V1_4 缺 fp_pending_pay_amount：判 FAIL" 'FAIL  V1_4 没生效'    "$O"
+has   "指名道姓说缺哪张表"                  'fp_pending_pay_amount'    "$O"
+hasnt "别的迁移项不受连累"                  'V1_3 没生效'              "$O"
+O=$(try_db "$(without '^table=fp_unmatched_notify$')")
+has   "V1_4 缺 fp_unmatched_notify：判 FAIL"   'FAIL  V1_4 没生效'    "$O"
+O=$(try_db "$(without '^table=')")
+has   "V1_4 两张表都没有：判 FAIL"          'FAIL  V1_4 没生效'        "$O"
+
+# —— V1_5：字段还是窄的要红。这一项跟 V1_2 不一样，不许只是「注意」：
+#    回调地址被截断 = 商户回调直接打不通，是当场就坏的事。
+O=$(try_db "$(printf '%s\n' "$DB_ALL_OK" | sed 's/^order_notify_url=2000/order_notify_url=255/')")
+has   "V1_5 字段还是窄的：判 FAIL"          'FAIL  V1_5 没生效'        "$O"
+has   "说清是哪个字段、现在多宽"            'order_notify_url=255'     "$O"
+hasnt "不许降级成「注意」糊弄过去"          'V1_5 可能没跑'            "$O"
+O=$(try_db "$(without '^merchant_return_url=')")
+has   "V1_5 字段整个查不到：判 FAIL"        'FAIL  V1_5 没生效'        "$O"
+has   "查不到就照实说查不到"                'merchant_return_url=查不到' "$O"
+
+echo
+echo "===== 八之三、数据库：MySQL 机器不能被指去装 PostgreSQL 的客户端 ====="
+# 生产是 PostgreSQL，但本地和老装机上有 MySQL/MariaDB（每个迁移脚本都有 _mysql 那一份）。
+# 以前这一段是写死 psql 的：MySQL 机器上查不了库，脚本却让人去装 postgresql-client，
+# 装完照样查不了，人还以为自己装错了。
+O=$(try_db 'bash: mysql: command not found' mysql)
+has   "判 FAIL"                            '❌ FAIL'                  "$O"
+has   "说的是 mysql 客户端"                 '没装 mysql 客户端'        "$O"
+has   "给的是 MySQL 的装法"                 'default-mysql-client'     "$O"
+hasnt "不该让人去装 postgresql-client"      'postgresql-client'        "$O"
+hasnt "也不许谎报「数据库连得上」"          '数据库连得上'             "$O"
+
+# MariaDB 走同一条路
+O=$(try_db 'bash: mysql: command not found' mariadb)
+has   "MariaDB 也认得出来"                  '没装 mysql 客户端'        "$O"
+
+# MySQL 的报错措辞跟 PostgreSQL 完全不同，只认 PostgreSQL 那套的话每次都落到「原因不明」
+mysql_reason() { local out; out=$(try_db "$1" mysql); has "分类：$2" "$2" "$out"; hasnt "  └ 提示里没有「$3」" "$3" "$out"; }
+mysql_reason "ERROR 1045 (28000): Access denied for user 'fastpay'@'192.0.2.10' (using password: YES)" '账号或口令不对' '192.0.2.10'
+mysql_reason "ERROR 1049 (42000): Unknown database 'fastpay_x'"                                        '库名或账号不存在' 'fastpay_x'
+mysql_reason "ERROR 2005 (HY000): Unknown MySQL server host 'db-host.example.invalid' (-2)"            '主机名解析不了' 'db-host.example.invalid'
+mysql_reason "ERROR 2003 (HY000): Can't connect to MySQL server on 'db-host.example.invalid:3306' (111)" '端口连不上' 'db-host.example.invalid'
+
+# 查得回来的时候，MySQL 和 PostgreSQL 走的是同一套判断 —— 方言差别在查询那一层就抹平了
+O=$(try_db "$DB_ALL_OK" mysql)
+has   "MySQL 上也认得出五项全跑过"          'V1_5 已生效'              "$O"
+hasnt "MySQL 上不许误报 FAIL"               '❌ FAIL'                  "$O"
 
 echo
 echo "===== 九、日志段：拿真日志文件跑真代码，从头到尾走一遍 ====="

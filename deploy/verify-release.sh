@@ -217,27 +217,100 @@ head_ '五、数据库'
 if [ ! -r "$ENV_FILE" ]; then
   no "读不到配置文件 $ENV_FILE（要用 root 跑这个脚本）"
 else
+  # 这台机器连的是哪种数据库？生产用的是 PostgreSQL，本地和老装机上有 MySQL/MariaDB
+  # （见 docs/DEPLOY.md 第三节：每个迁移脚本都有 _pg 和 _mysql 两份）。
+  # 单独开一个子 shell 只把「类型」带出来 —— 口令跟着 source 进来，绝不能带到外面。
+  DB_KIND=$(
+    set -a; . "$ENV_FILE" 2>/dev/null; set +a
+    printf '%s' "${DB_URL:-}" | sed -nE 's#^jdbc:(postgresql|mysql|mariadb)://.*#\1#p'
+  )
+
   # 只在子 shell 里 source，避免把口令泄到后面的输出里
+  #
+  # 不管走哪种数据库，查回来的都是同一套 key=value 行，下面那段判断因此不用关心方言：
+  #   username=64 / password=255 / token_version=n/a / merchant_password=255   ← V1_1、V1_2
+  #   notify_result=1000 / notify_error=500                                    ← V1_3
+  #   table=fp_pending_pay_amount / table=fp_unmatched_notify                  ← V1_4
+  #   order_notify_url=2000 / order_return_url=2000                            ← V1_5
+  #   merchant_notify_url=2000 / merchant_return_url=2000                      ← V1_5
+  # 查不到的列 / 不存在的表**不会有对应的行** —— 判断那段就是靠「行在不在」认漏跑的。
   DB_OUT=$(
     set -a; . "$ENV_FILE"; set +a
-    export PGPASSWORD="$DB_PASSWORD"
-    eval "$(echo "$DB_URL" | sed -nE 's#^jdbc:postgresql://([^:/]+):([0-9]+)/([^?]+).*#DBH=\1 DBP=\2 DBN=\3#p')"
-    if [ -z "${DBH:-}" ] || [ -z "${DBP:-}" ] || [ -z "${DBN:-}" ]; then
+    eval "$(echo "$DB_URL" | sed -nE 's#^jdbc:[a-z]+://([^:/]+):([0-9]+)/([^?]+).*#DBH=\1 DBP=\2 DBN=\3#p')"
+    if [ -z "${DB_KIND:-}" ] || [ -z "${DBH:-}" ] || [ -z "${DBP:-}" ] || [ -z "${DBN:-}" ]; then
       echo "PARSE_FAIL"; exit 0
     fi
-    psql -h "$DBH" -p "$DBP" -U "$DB_USERNAME" -d "$DBN" -Atq -c \
-      "SELECT column_name || '=' || COALESCE(character_maximum_length::text,'n/a')
-         FROM information_schema.columns
-        WHERE table_schema='public' AND table_name='fp_admin'
-          AND column_name IN ('username','password','token_version')
-        UNION ALL
-       SELECT 'merchant_password=' || COALESCE(character_maximum_length::text,'n/a')
-         FROM information_schema.columns
-        WHERE table_schema='public' AND table_name='fp_merchant' AND column_name='password';" 2>&1
+    if [ "$DB_KIND" = "postgresql" ]; then
+      export PGPASSWORD="$DB_PASSWORD"
+      psql -h "$DBH" -p "$DBP" -U "$DB_USERNAME" -d "$DBN" -Atq -c \
+        "SELECT column_name || '=' || COALESCE(character_maximum_length::text,'n/a')
+           FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='fp_admin'
+            AND column_name IN ('username','password','token_version')
+          UNION ALL
+         SELECT 'merchant_password=' || COALESCE(character_maximum_length::text,'n/a')
+           FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='fp_merchant' AND column_name='password'
+          UNION ALL
+         SELECT column_name || '=' || COALESCE(character_maximum_length::text,'n/a')
+           FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='fp_pay_order'
+            AND column_name IN ('notify_result','notify_error')
+          UNION ALL
+         SELECT 'table=' || table_name
+           FROM information_schema.tables
+          WHERE table_schema='public'
+            AND table_name IN ('fp_pending_pay_amount','fp_unmatched_notify')
+          UNION ALL
+         SELECT 'order_' || column_name || '=' || COALESCE(character_maximum_length::text,'n/a')
+           FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='fp_pay_order'
+            AND column_name IN ('notify_url','return_url')
+          UNION ALL
+         SELECT 'merchant_' || column_name || '=' || COALESCE(character_maximum_length::text,'n/a')
+           FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='fp_merchant'
+            AND column_name IN ('notify_url','return_url');" 2>&1
+    else
+      # MySQL / MariaDB。三处方言差别：字符串拼接只能用 CONCAT（`||` 在 MySQL 里是「或」，
+      # 照抄 PostgreSQL 的写法会静悄悄地全查成 0）、没有 ::text 这种转换（用 IFNULL 顶）、
+      # 当前库不叫 public 而是 DATABASE()。
+      # 口令走 MYSQL_PWD 而不是 -p，免得口令出现在命令行里被 ps 看见。
+      export MYSQL_PWD="$DB_PASSWORD"
+      mysql -h "$DBH" -P "$DBP" -u "$DB_USERNAME" -D "$DBN" -N -B -e \
+        "SELECT CONCAT(column_name,'=',IFNULL(character_maximum_length,'n/a'))
+           FROM information_schema.columns
+          WHERE table_schema=DATABASE() AND table_name='fp_admin'
+            AND column_name IN ('username','password','token_version')
+          UNION ALL
+         SELECT CONCAT('merchant_password=',IFNULL(character_maximum_length,'n/a'))
+           FROM information_schema.columns
+          WHERE table_schema=DATABASE() AND table_name='fp_merchant' AND column_name='password'
+          UNION ALL
+         SELECT CONCAT(column_name,'=',IFNULL(character_maximum_length,'n/a'))
+           FROM information_schema.columns
+          WHERE table_schema=DATABASE() AND table_name='fp_pay_order'
+            AND column_name IN ('notify_result','notify_error')
+          UNION ALL
+         SELECT CONCAT('table=',table_name)
+           FROM information_schema.tables
+          WHERE table_schema=DATABASE()
+            AND table_name IN ('fp_pending_pay_amount','fp_unmatched_notify')
+          UNION ALL
+         SELECT CONCAT('order_',column_name,'=',IFNULL(character_maximum_length,'n/a'))
+           FROM information_schema.columns
+          WHERE table_schema=DATABASE() AND table_name='fp_pay_order'
+            AND column_name IN ('notify_url','return_url')
+          UNION ALL
+         SELECT CONCAT('merchant_',column_name,'=',IFNULL(character_maximum_length,'n/a'))
+           FROM information_schema.columns
+          WHERE table_schema=DATABASE() AND table_name='fp_merchant'
+            AND column_name IN ('notify_url','return_url');" 2>&1
+    fi
   )
 
   if [ "$DB_OUT" = "PARSE_FAIL" ]; then
-    no "$ENV_FILE 里的 DB_URL 格式不对，应形如 jdbc:postgresql://主机:端口/库名"
+    no "$ENV_FILE 里的 DB_URL 格式不对，应形如 jdbc:postgresql://主机:端口/库名（MySQL 是 jdbc:mysql://主机:端口/库名）—— 只认得 postgresql / mysql / mariadb 这三种"
 
   # 判断依据是「**看见了预期的东西才算过**」，不是「没看见我认识的报错就算过」。
   #
@@ -263,40 +336,89 @@ else
       warn "V1_2 可能没跑：password 字段宽度是 ${ADM_PW:-?} / ${MCH_PW:-?}，期望 ≥255。bcrypt 是 60 字符，暂时不会出故障，但请补跑 V1_2"
     fi
 
+    # 下面三项（V1_3 / V1_4 / V1_5）一律判 FAIL，不判「注意」。
+    # V1_2 判「注意」是特例：password 窄一点，bcrypt 那 60 个字符照样塞得下，当天不会出故障。
+    # 这三项不是 —— 漏跑就是当场坏，而且坏在收钱这条路上。所以查不到就报红。（MTM-215）
+
+    # V1_3：fp_pay_order 要有 notify_result / notify_error 两列
+    V13_MISS=''
+    echo "$DB_OUT" | grep -q '^notify_result=' || V13_MISS="$V13_MISS notify_result"
+    echo "$DB_OUT" | grep -q '^notify_error='  || V13_MISS="$V13_MISS notify_error"
+    if [ -z "$V13_MISS" ]; then
+      ok "V1_3 已生效：fp_pay_order 的 notify_result / notify_error 两列都在"
+    else
+      no "V1_3 没生效：fp_pay_order 缺$V13_MISS —— 补跑 V1_3 迁移脚本（订单详情看不到回调失败原因）"
+    fi
+
+    # V1_4：这一版新建的两张表都得在。缺了不是「少个功能」——
+    # 代码去查这张表会直接报错，而且两人同时付一样的钱会认错人（MTM-170）。
+    V14_MISS=''
+    echo "$DB_OUT" | grep -q '^table=fp_pending_pay_amount$' || V14_MISS="$V14_MISS fp_pending_pay_amount"
+    echo "$DB_OUT" | grep -q '^table=fp_unmatched_notify$'   || V14_MISS="$V14_MISS fp_unmatched_notify"
+    if [ -z "$V14_MISS" ]; then
+      ok "V1_4 已生效：fp_pending_pay_amount / fp_unmatched_notify 两张表都在"
+    else
+      no "V1_4 没生效：缺表$V14_MISS —— 补跑 V1_4 迁移脚本（两人同时付一样的钱会认错人，代码查这张表还会直接报错）"
+    fi
+
+    # V1_5：四个 url 字段都要放宽到 2000。窄了长回调地址会被截断，订单回调直接打不通（MTM-209）。
+    V15_NARROW=''
+    for V15_COL in order_notify_url order_return_url merchant_notify_url merchant_return_url; do
+      V15_W=$(echo "$DB_OUT" | sed -n "s/^$V15_COL=//p")
+      [ "${V15_W:-0}" -ge 2000 ] 2>/dev/null || V15_NARROW="$V15_NARROW $V15_COL=${V15_W:-查不到}"
+    done
+    if [ -z "$V15_NARROW" ]; then
+      ok "V1_5 已生效：四个 url 字段都已放宽到 2000"
+    else
+      no "V1_5 没生效：这些字段还是窄的 —$V15_NARROW，期望 ≥2000 —— 补跑 V1_5 迁移脚本（长回调地址会被截断，商户回调打不通）"
+    fi
+
   else
-    # 走到这里 = psql 没把预期的结果查回来。可能是没装客户端、连不上、env 漏配口令
+    # 走到这里 = 数据库客户端没把预期的结果查回来。可能是没装客户端、连不上、env 漏配口令
     # 让子 shell 直接断掉（DB_OUT 是空的），也可能是报错是中文、我们认不出来。
     # 不管是哪种，一律只说「查不了」：不说「连得上」，也绝不说「V1_1 没生效」。
     # 下面只是尽量把话说具体一点，认不出来就照实说认不出来。
     if echo "$DB_OUT" | grep -qiE 'command not found|未找到命令|没有那个文件或目录|not found'; then
-      no "这台机器上没装 psql 客户端，数据库这一项查不了 —— 「V1_1 到位没」「V1_2 到位没」这两项这次也没查"
-      printf '         装上再跑一遍这个脚本：Debian/Ubuntu  apt-get install -y postgresql-client\n'
-      printf '                               CentOS/Rocky   dnf install -y postgresql\n'
+      # 客户端叫什么、怎么装，得按这台机器连的数据库来说。
+      # 一台跑 MySQL 的机器被指去装 postgresql-client，装完照样查不了。
+      if [ "${DB_KIND:-}" = "mysql" ] || [ "${DB_KIND:-}" = "mariadb" ]; then
+        no "这台机器上没装 mysql 客户端，数据库这一项查不了 —— 「V1_1 到 V1_5 这五项迁移到位没」这次也没查"
+        printf '         装上再跑一遍这个脚本：Debian/Ubuntu  apt-get install -y default-mysql-client\n'
+        printf '                               CentOS/Rocky   dnf install -y mysql\n'
+      else
+        no "这台机器上没装 psql 客户端，数据库这一项查不了 —— 「V1_1 到 V1_5 这五项迁移到位没」这次也没查"
+        printf '         装上再跑一遍这个脚本：Debian/Ubuntu  apt-get install -y postgresql-client\n'
+        printf '                               CentOS/Rocky   dnf install -y postgresql\n'
+      fi
       printf '         ⚠️ 这不代表数据库有问题 —— 脚本压根没连过库。别去动数据库，也别去补跑迁移脚本。\n'
     elif [ -z "$DB_OUT" ]; then
       # 一个字都没有：多半是 env 里少了 DB_PASSWORD / DB_USERNAME，
       # set -u 把子 shell 当场打断，报错走的是脚本自己的 stderr，进不到 DB_OUT 里。
-      no "数据库这一项查不了：psql 一个字都没查回来 —— 「V1_1 到位没」「V1_2 到位没」这两项这次也没查"
+      no "数据库这一项查不了：数据库客户端一个字都没查回来 —— 「V1_1 到 V1_5 这五项迁移到位没」这次也没查"
       printf '         先检查 %s 里 DB_USERNAME / DB_PASSWORD 是不是漏配了，补全再跑一遍。\n' "$ENV_FILE"
       printf '         ⚠️ 这不代表数据库有问题 —— 脚本没查成任何东西。别去动数据库，也别去补跑迁移脚本。\n'
     else
       # 故意不打印 psql 的原始报错：它里面带着数据库地址和账号名
       # （形如 connection to server at "10.0.x.x", port 5432 failed: ... for user "xxx"），
       # 而这份输出经常被贴回 issue 给人看，docs/SECRETS.md 明令内网地址一个字都不许进去。
-      # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次 psql。
+      # 所以只给不含地址的归类提示，要看原文自己 SSH 上去手工跑一次数据库客户端。
       # 分得细一点，人一眼能知道该去查哪儿。中文报错也认几句，认不出来就照实说认不出来。
+      # 每一类都认两套说法：psql/libpq 一套，MySQL 一套。MySQL 的报错措辞和 PostgreSQL
+      # 完全不一样（Access denied / Unknown database / Can't connect to MySQL server），
+      # 只认 PostgreSQL 那套的话，MySQL 机器上每次都落到「原因不明」，等于白分类。
       case "$DB_OUT" in
-        *"password authentication failed"*|*"身份验证失败"*)   DB_HINT='账号或口令不对' ;;
-        *"does not exist"*|*"不存在"*)                         DB_HINT='库名或账号不存在' ;;
-        *"could not translate host name"*|*"Name or service not known"*|*"UnknownHostException"*|*"无法解析"*)
+        *"password authentication failed"*|*"身份验证失败"*|*"Access denied for user"*)
+                                                               DB_HINT='账号或口令不对' ;;
+        *"does not exist"*|*"不存在"*|*"Unknown database"*)    DB_HINT='库名或账号不存在' ;;
+        *"could not translate host name"*|*"Name or service not known"*|*"UnknownHostException"*|*"无法解析"*|*"Unknown MySQL server host"*)
                                                                DB_HINT='主机名解析不了（DNS 或 /etc/hosts）' ;;
         *"timeout expired"*|*"timed out"*|*"超时"*)            DB_HINT='连接超时（多半是网络或防火墙）' ;;
-        *"Connection refused"*|*"could not connect"*|*"no route to host"*|*"拒绝连接"*)
+        *"Connection refused"*|*"could not connect"*|*"no route to host"*|*"拒绝连接"*|*"Can't connect to MySQL server"*)
                                                                DB_HINT='端口连不上（数据库可能没起来）' ;;
         *)                                                     DB_HINT='原因不明（报错认不出来，可能是中文或别的语言）' ;;
       esac
-      no "数据库这一项查不了：$DB_HINT —— 「V1_1 到位没」「V1_2 到位没」这两项这次也没查"
-      printf '         原始报错里带着服务器地址和账号，按规矩不打印；要看原文自己 SSH 上去手工跑一次 psql（连接信息在 %s）。\n' "$ENV_FILE"
+      no "数据库这一项查不了：$DB_HINT —— 「V1_1 到 V1_5 这五项迁移到位没」这次也没查"
+      printf '         原始报错里带着服务器地址和账号，按规矩不打印；要看原文自己 SSH 上去手工跑一次数据库客户端（连接信息在 %s）。\n' "$ENV_FILE"
       printf '         ⚠️ 这不代表迁移脚本没跑 —— 脚本没连上库，什么都没查到。别去补跑迁移脚本。\n'
     fi
   fi
