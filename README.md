@@ -477,14 +477,15 @@ npm run dev
 ```bash
 cd fastpay-demo
 
-# 修改配置文件 src/main/resources/application.yml
+# 修改配置文件 src/main/resources/application-dev.yml
 # - 商户编号、API密钥
 # - 支付网关地址
 
-mvn spring-boot:run
+# 一定要带 profiles=dev，否则读不到 application-dev.yml，服务能起但配置全空
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-访问地址：http://localhost:8080
+访问地址：http://localhost:7002
 
 ---
 

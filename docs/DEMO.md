@@ -46,7 +46,8 @@ fastpay-demo/
 │   │   ├── page_pay_submit.html       # 支付表单提交页
 │   │   ├── api_pay.html               # API 接口支付
 │   │   └── result.html                # 支付结果页
-│   └── application.yml                 # 配置文件
+│   ├── application-dev.yml            # 开发环境配置（本地跑用这份）
+│   └── application-prod.yml           # 生产环境配置（部署时由环境变量注入真实值）
 │
 └── pom.xml                             # Maven 配置
 ```
@@ -63,24 +64,32 @@ fastpay-demo/
 
 ### 4.2 配置修改
 
-编辑 `src/main/resources/application.yml`：
+编辑 `src/main/resources/application-dev.yml`（本地开发用的配置文件）。里面的值都写成了 `${环境变量名:默认值}` 的形式，本地跑改默认值就行，上生产再走环境变量。
 
 ```yaml
 server:
-  port: 8080
+  port: 7002
+
+spring:
+  application:
+    name: fastpay-demo
+  thymeleaf:
+    cache: false
+    prefix: classpath:/templates/
+    suffix: .html
 
 # FAST 易支付配置
 fastpay:
   # 商户编号（在商户平台获取）
-  merchant-no: your-merchant-no-here
+  merchant-no: ${FASTPAY_DEMO_MERCHANT_NO:your-merchant-no-here}
   # API 密钥（在商户平台获取）
-  api-secret: your-api-secret-here
+  api-secret: ${FASTPAY_DEMO_API_SECRET:your-api-secret-here}
   # 支付网关地址
-  gateway-url: http://localhost:9090/fastpay-server
+  gateway-url: ${FASTPAY_DEMO_GATEWAY_URL:http://localhost:7001/fastpay-server}
   # 异步通知地址（需要外网可访问）
-  notify-url: http://your-domain.com/pay/notify
+  notify-url: ${FASTPAY_DEMO_NOTIFY_URL:http://localhost:7002/pay/notify}
   # 同步跳转地址
-  return-url: http://localhost:8080/pay/return
+  return-url: ${FASTPAY_DEMO_RETURN_URL:http://localhost:7002/pay/return}
 ```
 
 **配置说明**：
@@ -89,18 +98,20 @@ fastpay:
 |--------|------|----------|
 | merchant-no | 商户编号 | 商户平台 → 开发配置 |
 | api-secret | API 密钥 | 商户平台 → 开发配置 → 查看密钥 |
-| gateway-url | 支付网关地址 | FAST 易支付服务端地址 |
-| notify-url | 异步通知地址 | 您的服务器外网地址 + /pay/notify |
-| return-url | 同步跳转地址 | 支付成功后跳转的页面地址 |
+| gateway-url | 支付网关地址 | FAST 易支付服务端地址（本地默认 `http://localhost:7001/fastpay-server`） |
+| notify-url | 异步通知地址 | 您的服务器外网地址 + /pay/notify（本地默认走 `http://localhost:7002`） |
+| return-url | 同步跳转地址 | 支付成功后跳转的页面地址（本地默认 `http://localhost:7002/pay/return`） |
 
 ### 4.3 启动项目
 
 ```bash
 cd fastpay-demo
-mvn spring-boot:run
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-访问地址：http://localhost:8080
+⚠️ 一定要带上 `-Dspring-boot.run.profiles=dev`，否则读不到上面的 `application-dev.yml`，商户号、密钥、网关地址一个都加载不进来，服务能起但接口全空。
+
+访问地址：http://localhost:7002
 
 ---
 
