@@ -294,3 +294,5 @@ case "${1:-}" in
   -h|--help|help|"") usage ;;
   *) usage; exit 2 ;;
 esac
+
+# 演示用（MTM-211），验完就删
