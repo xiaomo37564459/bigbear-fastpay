@@ -4,17 +4,23 @@
 #
 # 用法（在自己电脑上跑，不用先登服务器）：
 #
-#     ssh root@<服务器> 'bash -s v1.6.0 MTM-210' < deploy/verify-release.sh
+#     ssh root@<服务器> 'bash -s v1.6.0 MTM-210 prod' < deploy/verify-release.sh
 #
 # 已经登在服务器上了也可以直接跑：
 #
-#     bash /root/fastpay-ops/verify-release.sh v1.6.0 MTM-210
+#     bash /root/fastpay-ops/verify-release.sh v1.6.0 MTM-210 prod
 #
 # 参数 1：这次发的版本号（git tag），例如 v1.6.0。不传就跳过版本号比对。
 # 参数 2：这次动生产用的操作锁令牌（就是你的 issue 编号），例如 MTM-210。
 #         传了它，脚本会顺便确认「这台机器现在是不是只有你一个人在动」——
-#         有别人占着锁就直接判失败。不传就只是把当前谁在动打出来看看。
-#         操作锁是什么，见 docs/DEPLOY.md 第零节。
+#         有别人占着锁就直接判失败。不传的话，默认只是把当前谁在动打出来看看
+#         （写了参数 3 的 prod 时更严，见下）。操作锁是什么，见 docs/DEPLOY.md 第零节。
+# 参数 3：这台机器是不是生产环境。动生产就写 prod，别的环境写 test / staging / dev，
+#         不传就是「没说」。写了 prod 之后，第七节这两种情况会直接判失败，而不是只提醒：
+#           · 这台机器上压根没装操作锁 —— 生产上少了这层保护不能悄悄放过去
+#           · 你没传参数 2（手上没锁），而这会儿确实有别人占着锁在动这台机器
+#         没人占锁时照常放行：这个脚本只读，纯粹上来体检一下的人不该被拦（MTM-220）。
+#         这三档以外的值一律判失败：拼错了就等于保护失效，而失效是没有任何动静的。
 #
 # 退出码：全绿 = 0；有任何一项 FAIL = 1。可以直接串在部署命令后面。
 #
@@ -31,6 +37,7 @@ set -uo pipefail
 
 EXPECT_VER="${1:-}"
 LOCK_TOKEN="${2:-}"
+ENV_DECL="${3:-}"      # 这台机器是不是生产环境：prod / test / staging / dev / 不传
 
 OPS_DIR=/root/fastpay-ops
 LOCK_INFO="$OPS_DIR/prod-deploy.lock/holder"
@@ -129,6 +136,8 @@ printf '服务器：%s\n' "$(hostname)"
 printf '时间：  %s\n' "$(date '+%F %T %Z')"
 [ -n "$EXPECT_VER" ] && printf '本次要发的版本：%s\n' "$EXPECT_VER" \
                      || printf '本次要发的版本：（没传，跳过版本比对）\n'
+[ -n "$ENV_DECL" ] && printf '这台机器是：    %s\n' "$ENV_DECL" \
+                   || printf '这台机器是：    （没说是不是生产，第 7 项按宽松处理）\n'
 
 # ---------------------------------------------------------------- 1. 后端服务
 head_ '一、后端服务'
@@ -329,14 +338,34 @@ head_ '七、同一时间只有你一个人在动这台机器吗'
 # 改这一段之前先跑一遍 deploy/verify-release.test.sh。这里最要命的是「该判 FAIL 的
 # 判成了 PASS」—— 那等于把并发上线放行了，而放行是不会有任何报错的。
 # ======================= 操作锁检查（lock）开始 =======================
+# 第 3 个参数说了这是不是生产环境。为什么要有这个参数（MTM-220）：
+# 机器上没装 prod-lock.sh 时，这一节原来只提醒一句就过去了。好处是老机器、老流程
+# 不会被硬卡住，坏处是万一哪天有人漏装了锁脚本，这层保护就悄悄失效了，没人会发现。
+# 折中办法：只有明说了「这是生产」才判失败，其他环境和没说的情况照旧只提醒。
+IS_PROD=0; ENV_BAD=''
+case "$(printf '%s' "${ENV_DECL:-}" | tr 'A-Z' 'a-z')" in
+  '')                          IS_PROD=0 ;;   # 没说，宽松处理
+  prod|production|生产)         IS_PROD=1 ;;
+  test|staging|dev|测试|预发)    IS_PROD=0 ;;   # 明说了不是生产，宽松处理
+  *)                           ENV_BAD="$ENV_DECL" ;;
+esac
+
 LOCK_WHO=''; LOCK_TOK=''
 if [ -f "$LOCK_INFO" ]; then
   LOCK_TOK=$(sed -n 's/^TOKEN=//p' "$LOCK_INFO" | head -n1)
   LOCK_WHO=$(sed -n 's/^WHO=//p'   "$LOCK_INFO" | head -n1)
 fi
 
-if [ ! -x "$OPS_DIR/prod-lock.sh" ]; then
-  warn "这台机器上还没装操作锁（$OPS_DIR/prod-lock.sh），没法确认有没有人跟你同时在动。安装办法见 docs/DEPLOY.md 第零节"
+# 认不出来的环境值不能当成「没说」放过去 —— 把 prod 拼错了，保护就跟着没了，
+# 而这种失效是安安静静的。所以宁可在这儿当场拦下来，让人把参数写对再跑。
+if [ -n "$ENV_BAD" ]; then
+  no "第 3 个参数「$ENV_BAD」认不出来 —— 只认 prod / production / 生产（生产环境），或者 test / staging / dev（非生产），不传就是没说。拼错了这一项的保护会悄悄失效，所以这里先拦住，改对再跑"
+elif [ ! -x "$OPS_DIR/prod-lock.sh" ]; then
+  if [ "$IS_PROD" = 1 ]; then
+    no "这台机器上还没装操作锁（$OPS_DIR/prod-lock.sh），而你说了这是生产环境 —— 没法确认有没有人跟你同时在动，生产上不能就这么过。装法见 docs/DEPLOY.md 第零节"
+  else
+    warn "这台机器上还没装操作锁（$OPS_DIR/prod-lock.sh），没法确认有没有人跟你同时在动。安装办法见 docs/DEPLOY.md 第零节（这次没说明是生产环境，所以只提醒；动生产时请把第 3 个参数写成 prod，那时这一项会直接判失败）"
+  fi
 elif [ -n "$LOCK_TOKEN" ]; then
   if [ -z "$LOCK_TOK" ]; then
     no "你说你这次是拿着 $LOCK_TOKEN 这把锁在动生产，但机器上根本没有人占锁 —— 要么你压根没上锁就动了，要么锁被别人放掉了。两种情况都得先弄清楚，见 docs/DEPLOY.md 第零节"
@@ -346,7 +375,16 @@ elif [ -n "$LOCK_TOKEN" ]; then
     no "有别人正在动这台机器！锁在 $LOCK_TOK（$LOCK_WHO）手上，不是你的 $LOCK_TOKEN。两路人同时动同一台生产服务器 = 上面这些检查结果都不可信，立刻停手，去 $LOCK_TOK 那条 issue 下面对一下"
   fi
 elif [ -n "$LOCK_TOK" ]; then
-  warn "现在有人正在动这台机器：$LOCK_TOK（$LOCK_WHO）。你看到的状态随时可能在变。要让脚本帮你把这一项判死，跑的时候把你的锁令牌当第 2 个参数传进来"
+  # 你没传锁令牌，但机器上有人占着锁。判不判死，看这是不是生产（MTM-220）：
+  # 这个脚本是只读体检，纯粹上来看看服务活着没的人不该被拦 —— 所以不是「写了 prod
+  # 又没传令牌」就判死。真危险的只有这一种组合：别人正动着这台生产机器，你却两眼
+  # 一抹黑也摸上来了，那上面每一项检查结果都随时会被他改掉。
+  # 非生产、或者没说环境，照旧只提醒 —— 一刀切卡死无害操作，大家只会学会「别写 prod」。
+  if [ "$IS_PROD" = 1 ]; then
+    no "有别人正在动这台生产机器：$LOCK_TOK（$LOCK_WHO），而你手上没锁 —— 上面那些检查结果都不可信，你看到的状态随时会被他改掉。立刻停手，去 $LOCK_TOK 那条 issue 下面对一下；确实轮到你动生产，就先按 docs/DEPLOY.md 第零节上锁，再把锁令牌当第 2 个参数传进来"
+  else
+    warn "现在有人正在动这台机器：$LOCK_TOK（$LOCK_WHO）。你看到的状态随时可能在变。要让脚本帮你把这一项判死，跑的时候把你的锁令牌当第 2 个参数传进来"
+  fi
 else
   ok "现在没有人占着操作锁，这台机器是空的"
 fi
