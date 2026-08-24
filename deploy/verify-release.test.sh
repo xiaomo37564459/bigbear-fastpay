@@ -29,17 +29,20 @@ cut_block() { # cut_block <起始行正则> <结束行正则>
   sed -n "/$1/,/$2/p" "$SRC"
 }
 MASK_SRC=$(cut_block '^# =* 遮蔽（mask）开始' '^# =* 遮蔽（mask）结束')
+MIG_SRC=$(cut_block '^# =* 迁移检查（migration）开始' '^# =* 迁移检查（migration）结束')
 DB_SRC=$(cut_block '^  if \[ "\$DB_OUT" = "PARSE_FAIL" \]; then$' '^  fi$')
 LOG_SRC=$(cut_block '^if \[ -r "\$LOG_FILE" \]; then$' '^fi$')
 LOCK_SRC=$(cut_block '^# =* 操作锁检查（lock）开始' '^# =* 操作锁检查（lock）结束')
 CNT_SRC=$(grep -E '^(ok|no|warn)\(\)' "$SRC")
 
-for pair in "遮蔽段:$MASK_SRC" "数据库段:$DB_SRC" "日志段:$LOG_SRC" "操作锁段:$LOCK_SRC" "计数函数:$CNT_SRC"; do
+for pair in "遮蔽段:$MASK_SRC" "迁移检查段:$MIG_SRC" "数据库段:$DB_SRC" "日志段:$LOG_SRC" "操作锁段:$LOCK_SRC" "计数函数:$CNT_SRC"; do
   [ -n "${pair#*:}" ] || { echo "抠不到「${pair%%:*}」—— verify-release.sh 的结构变了，先修这个测试"; exit 2; }
 done
 
 C_OK=''; C_NO=''; C_WARN=''; C_B=''; C_OFF=''
 eval "$CNT_SRC"
+# 迁移检查那张表和判定逻辑：数据库段会调用它们，所以得先加载进来
+eval "$MIG_SRC"
 
 # ---------------------------------------------------------------- 断言
 T=0; F=0
@@ -187,9 +190,9 @@ has   "判 FAIL，而且判的就是「查不了」"     'FAIL  数据库这一�
 hasnt "一条都不许判通过"                   '✅ PASS'                  "$O"
 hasnt "绝不能说「数据库连得上」"           '数据库连得上'             "$O"
 hasnt "绝不能说「V1_1 没生效」"            'V1_1 没生效'              "$O"
-hasnt "绝不能把人指去补跑迁移脚本"         '补跑 V1_1 迁移脚本'       "$O"
+hasnt "绝不能把人指去补跑迁移脚本"         '补跑 V1_'                 "$O"
 has   "改指去查 env 里漏配的账号口令"       'DB_USERNAME'              "$O"
-has   "说清迁移那两项这次也没查"            '这次也没查'               "$O"
+has   "说清迁移那几项这次也没查"            '这次也没查'               "$O"
 
 # 同一个坑的另一副面孔：机器是中文的，psql 没装时报的是「未找到命令」。
 # 老写法只认英文 command not found，认不出来就当没事 —— 照样谎报「连得上」。
@@ -215,23 +218,101 @@ reason 'psql: error: something nobody has seen before' '原因不明'
 
 echo
 echo "===== 八、回归：原来该过的还得过 ====="
-O=$(try_db 'username=64
-password=255
-token_version=n/a
-merchant_password=255')
+# 假的查询结果照着脚本里那张迁移检查表现造，不手写死。
+# 这样以后往表里加一版新迁移，下面这些测试会自动跟着覆盖到，不用回来补 fixture。
+db_all_good() { # 造一份「每一版都跑过了」的结果
+  printf 'PROBE=3\n'
+  mig_rows | while IFS='|' read -r ver kind tbl col minw sev msg; do
+    case "$kind" in
+      table) printf 'T:%s=1\n'      "$tbl" ;;
+      width) printf 'C:%s.%s=%s\n'  "$tbl" "$col" "$minw" ;;
+      *)     printf 'C:%s.%s=n/a\n' "$tbl" "$col" ;;
+    esac
+  done
+}
+# 把某一行整个拿掉 = 那张表 / 那一列压根不存在 = 那一版漏跑了
+db_without() { db_all_good | awk -v k="$1=" 'index($0,k) != 1'; }
+# 把某一列的宽度改窄 = 「加宽」那一版漏跑了
+db_narrow()  { db_all_good | awk -v k="$1=" -v v="$2" 'index($0,k)==1 { print k v; next } { print }'; }
+
+O=$(try_db "$(db_all_good)")
 has   "连得上"                            'PASS  数据库连得上'       "$O"
 has   "V1_1 判定还在"                     'V1_1 已生效'              "$O"
 has   "V1_2 判定还在"                     'V1_2 已生效'              "$O"
-hasnt "没有误报 FAIL"                     '❌ FAIL'                  "$O"
+hasnt "全跑过了不许报 FAIL"                '❌ FAIL'                  "$O"
+hasnt "全跑过了也不许瞎提醒"                '⚠️'                       "$O"
 
-O=$(try_db 'username=64
-password=60
-merchant_password=60')
+O=$(try_db "$(db_without 'C:fp_admin.token_version')")
 has   "缺 token_version 查得出来"          'V1_1 没生效'              "$O"
+O=$(try_db "$(db_narrow 'C:fp_admin.password' 60)")
 has   "password 太窄会提醒"                'V1_2 可能没跑'            "$O"
+hasnt "password 太窄只提醒，不判 FAIL"      '❌ FAIL'                  "$O"
 
 O=$(try_db 'PARSE_FAIL')
 has   "DB_URL 格式不对仍判 FAIL"           'DB_URL 格式不对'          "$O"
+
+echo
+echo "===== 八之二、迁移：后几版漏跑了必须报出来（MTM-214 就是栽在这儿）====="
+# 出事的场景：脚本里手写的 if 只认 V1_1 / V1_2，后来加的 V1_3 / V1_4 / V1_5 没人回来补。
+# 于是这几版漏跑了脚本照样一路全绿，发版的人以为万事大吉 —— 尤其 V1_4 漏跑，等于那个
+# 「两人同价撞单认错人」的赔钱 bug 修复根本没生效，而且没有任何迹象会让人察觉。
+# 每一条都同时钉死两件事：报出了是哪一版，而且真的判了 FAIL（不是只提醒一句）。
+mig_missing() { # mig_missing <说明> <要拿掉的键> <期望报出的版本>
+  local o; o=$(try_db "$(db_without "$2")")
+  has   "$1：报出了 $3"          "$3 没生效"  "$o"
+  has   "$1：判 FAIL"            '❌ FAIL'    "$o"
+  hasnt "$1：不许说这一版已生效"  "$3 已生效"  "$o"
+}
+mig_missing '漏跑 V1_3（回调结果列）'     'C:fp_pay_order.notify_result' 'V1_3'
+mig_missing '漏跑 V1_3（回调报错列）'     'C:fp_pay_order.notify_error'  'V1_3'
+mig_missing '漏跑 V1_4（待支付金额占位表）' 'T:fp_pending_pay_amount'      'V1_4'
+mig_missing '漏跑 V1_4（未匹配收款通知表）' 'T:fp_unmatched_notify'        'V1_4'
+
+O=$(try_db "$(db_narrow 'C:fp_pay_order.notify_url' 255)")
+has   "漏跑 V1_5（URL 列还是 255）：报出了 V1_5" 'V1_5 没生效'          "$O"
+has   "漏跑 V1_5：判 FAIL"                       '❌ FAIL'              "$O"
+
+# 只漏一版，别的版本不能跟着一起被冤枉 —— 冤枉了，人就会去重跑一堆本来不用跑的脚本
+O=$(try_db "$(db_without 'T:fp_pending_pay_amount')")
+has   "只漏 V1_4 时：V1_1 照样报已生效"          'V1_1 已生效'          "$O"
+has   "只漏 V1_4 时：V1_3 照样报已生效"          'V1_3 已生效'          "$O"
+has   "只漏 V1_4 时：V1_5 照样报已生效"          'V1_5 已生效'          "$O"
+
+echo
+echo "===== 八之三、连上了但库是空的：不许一版版报「没生效」，得指去核对库名 ====="
+# 库名写错、连到别的库上去了，业务表一张都没有。这时候老老实实一版版报「没生效」，
+# 会把人指去对着错的库跑迁移脚本 —— 又是「方向指反」那类坑（MTM-204 / MTM-218 同款）。
+O=$(try_db 'PROBE=0')
+has   "判 FAIL"                        '❌ FAIL'          "$O"
+has   "连得上这句照说"                  '数据库连得上'      "$O"
+has   "指去核对库名"                    '库名写错'          "$O"
+hasnt "不许指去跑迁移脚本"              '补跑 V1_'          "$O"
+hasnt "不许一版版报没生效"              '没生效'            "$O"
+has   "说清这几项这次也没查"            '这次也没查'        "$O"
+
+echo
+echo "===== 八之四、那张迁移检查表本身：五版都得管着，每一行都得真被查到 ====="
+# 这一条防的是「表被人不小心改瘦了」：误删几行、或者把 V1_4 那两张表删掉之后，
+# 上面所有测试照样全过 —— 又悄悄退回到只认前两版。所以直接对着表本身钉。
+VER_LIST=$(mig_rows | cut -d'|' -f1)
+for v in V1_1 V1_2 V1_3 V1_4 V1_5; do
+  T=$((T+1))
+  case "$VER_LIST" in
+    *"$v"*) printf '  ✅ 表里管着 %s\n' "$v" ;;
+    *)      F=$((F+1)); printf '  ❌ 表里没有 %s —— 这一版漏跑了，脚本查不出来\n' "$v" ;;
+  esac
+done
+has "版本清单打得出来给人看" 'V1_5' "$(mig_versions)"
+
+# 表里每一行都得真的进到查询语句里，否则等于写了没查
+T=$((T+1))
+SQL=$(mig_sql); MISS=''
+while IFS='|' read -r v kind tbl col minw sev msg; do
+  case "$SQL" in *"$tbl"*) ;; *) MISS="$MISS $tbl" ;; esac
+  [ "$kind" = table ] || case "$SQL" in *"$col"*) ;; *) MISS="$MISS $tbl.$col" ;; esac
+done < <(mig_rows)
+if [ -z "$MISS" ]; then printf '  ✅ 表里每一行都进了查询语句\n'
+else F=$((F+1)); printf '  ❌ 这些没进查询语句：%s\n' "$MISS"; fi
 
 echo
 echo "===== 九、日志段：拿真日志文件跑真代码，从头到尾走一遍 ====="
