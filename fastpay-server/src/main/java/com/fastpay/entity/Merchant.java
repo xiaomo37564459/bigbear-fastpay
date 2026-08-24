@@ -1,6 +1,7 @@
 package com.fastpay.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -41,8 +42,11 @@ public class Merchant implements Serializable {
     private String username;
 
     /**
-     * 登录密码（加密存储）
+     * 登录密码（加密存储）。
+     * WRITE_ONLY：只允许写入（数据库/内部），永远不许序列化到接口返回体——
+     * 密码即使是密文也不该从任何接口再吐出去（MTM-186）。
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String password;
 
     /**

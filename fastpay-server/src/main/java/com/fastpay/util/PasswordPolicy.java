@@ -16,7 +16,7 @@ public final class PasswordPolicy {
     /** 最短长度 */
     public static final int MIN_LENGTH = 8;
 
-    /** 最长长度（Admin.password 是 VARCHAR(64) 存 MD5，明文再长也没意义，这里限制到 64） */
+    /** 最长长度（MTM-161 之后 password 字段已放宽到 VARCHAR(255) 存 bcrypt；明文限制到 64 是为了防止过长明文占用算力，跟数据库字段宽度无关） */
     public static final int MAX_LENGTH = 64;
 
     /**

@@ -63,6 +63,38 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 起来，Spring 就已经在用 @DynamicPropertySource 读数据库连接信息了，会连到错误的地址上。所以保持默认
  * 的 PER_METHOD 生命周期（@BeforeAll 必须是 static，本来就是），跨步骤共享的状态改用 static 字段。
  */
+/* =============================================================================
+ * 加新测试前必读（MTM-197 立的规矩）
+ * =============================================================================
+ *
+ * 这个文件里的 38 条存量测试是一长串按 @Order 串起来的步骤，全共用同一个商户 it_merchant_01
+ * 的数据。存量暂时保持原样不动，但 **新加进来的测试必须遵守下面两条**，不然合并后一定会
+ * 踩到「各自都绿、合起来就红」的坑（前后已经栽过 3 次）。
+ *
+ * 规矩 1：新加的测试必须自己建商户，断言只查自己商户名下的数据
+ * ----------------------------------------------------------------
+ * 不要复用 it_merchant_01 那一套 —— 别人往里加订单/店铺，你的断言就会翻车。
+ * 直接调 createIsolatedMerchant("&lt;你的测试标识&gt;") 拿一个 {@link MerchantScope} 句柄，
+ * 里面 merchantNo / shopNo / channelId / apiSecret / merchantToken 一次给全，
+ * 后面所有下单、查询、断言都基于这个句柄里的字段，不去碰共用的静态 merchantId / shopNo 等。
+ *
+ * 规矩 2：不许写死绝对条数
+ * ----------------------------------------------------------------
+ * 比如 assertThat(count).isEqualTo(3) 这种是错的 —— 别人多造一笔就把你的测试搞红。
+ * 确实要断全局数字的（后台首页统计之类），一律改成「前后差值」写法：先记一下操作前
+ * 的数、操作后再记一次、断言差值。参考本文件已经写对的样板：
+ *   - {@code step16_duplicateNotifyIsIdempotent} (@Order 32, 见 :427-441)
+ *   - {@code step17_unmatchedNotifyIsRecordedAndVisibleInAdmin} (@Order 33, 见 :447-453)
+ *
+ * @Order 号段分区（第一步机器检查上线后生效，号只用来分区、不再用来排队）
+ * ----------------------------------------------------------------
+ *   1 ~ 19  主线剧本（step1~step14），验一条真实支付链路走得通，顺序本身就是要验的东西
+ *   20+     专题用例，专题之间谁先谁后无所谓（前提是每个专题都遵守上面规矩 1）
+ *
+ * 撞号（两个 @Test 方法挂了同一个 @Order 值）会被 {@link DuplicateTestOrderGuardTest}
+ * 直接拦下让 mvn test 红。不用人守，让机器守。
+ * =============================================================================
+ */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
 @ActiveProfiles("dev")
@@ -133,6 +165,10 @@ abstract class AbstractFullFlowTest {
         assertThat(merchantId).isPositive();
         assertThat(merchantNo).isNotBlank();
         assertThat(merchantApiSecret).isNotBlank();
+        // MTM-186：新建商户接口不许把密码字段（无论明文还是密文）再吐回给调用方
+        assertThat(merchant.has("password"))
+                .as("新建商户接口返回体不能带 password 字段")
+                .isFalse();
 
         JsonNode loginData = dataOf(postJson("/api/merchant/login", null,
                 Map.of("username", MERCHANT_USERNAME, "password", MERCHANT_PASSWORD)));
@@ -350,7 +386,7 @@ abstract class AbstractFullFlowTest {
     }
 
     @Test
-    @Order(12)
+    @Order(14)
     void step12b_epayApiRefundReturnsExplicitUnsupported() throws Exception {
         // sub2api 二进制里硬编码了 /api.php?act=refund。本期不做退款，
         // 但必须给一个"明确不支持"的响应，不能 404 / 500 让对方误以为网络异常
@@ -910,6 +946,60 @@ abstract class AbstractFullFlowTest {
         assertThat(adminView.get("merchantName").asText()).isEqualTo("IT Test Merchant");
     }
 
+    @Test
+    @Order(50)
+    void step50_isolatedMerchantHelperGivesIndependentContext() throws Exception {
+        // MTM-197「规矩 1」的活样板 + createIsolatedMerchant 的自测 —— 后端接口有变化时会在这里先红。
+        // 新加的专题测试都应该照这个格式抄：先拿一个隔离商户句柄，断言只查这个商户名下的数据。
+        MerchantScope iso = createIsolatedMerchant("o50_helper");
+
+        // 工具方法必须一次给全后续测试要用到的字段，缺一个后人拼签名 / 查数据就得自己再补
+        assertThat(iso.merchantId).isPositive();
+        assertThat(iso.merchantNo).isNotBlank();
+        assertThat(iso.apiSecret).isNotBlank();
+        assertThat(iso.merchantToken).isNotBlank();
+        assertThat(iso.shopId).isPositive();
+        assertThat(iso.shopNo).isNotBlank();
+        assertThat(iso.channelId).isPositive();
+        assertThat(iso.qrcodeId).isPositive();
+
+        // 用这个隔离商户的 apiSecret + shopNo 现场下一笔单，签名规则跟 step4 完全一样。
+        // createSignedOrder(...) 硬编码用的是共用商户的字段，这里必须自己组一份。
+        long timestamp = System.currentTimeMillis() / 1000;
+        BigDecimal amount = new BigDecimal("1.11");
+        String outTradeNo = "ISO_" + System.nanoTime();
+        TreeMap<String, Object> signParams = new TreeMap<>();
+        signParams.put("merchantNo", iso.merchantNo);
+        signParams.put("outTradeNo", outTradeNo);
+        signParams.put("shopNo", iso.shopNo);
+        signParams.put("payType", "wxpay");
+        signParams.put("amount", amount.toPlainString());
+        signParams.put("subject", "iso 样板订单");
+        signParams.put("timestamp", String.valueOf(timestamp));
+        String sign = SignUtil.generateSign(signParams, iso.apiSecret);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("merchantNo", iso.merchantNo);
+        body.put("outTradeNo", outTradeNo);
+        body.put("shopNo", iso.shopNo);
+        body.put("payType", "wxpay");
+        body.put("amount", amount);
+        body.put("subject", "iso 样板订单");
+        body.put("timestamp", timestamp);
+        body.put("sign", sign);
+        JsonNode data = dataOf(postJson("/api/pay/create", null, body));
+        String orderNo = data.get("orderNo").asText();
+        assertThat(orderNo).isNotBlank();
+
+        // 用隔离商户 token 查自己名下的订单，只应看到刚下的这一笔。
+        // 注意：这里的 total == 1 是"隔离商户自己"的绝对数（新建商户之前没订单）—— 符合规矩 1，
+        // 不违反规矩 2：规矩 2 只禁止用绝对数去断"共用 / 全局"计数，自己商户名下的绝对数是允许的。
+        JsonNode ownPage = dataOf(getJson(
+                "/api/merchant/order/page?current=1&size=10", iso.merchantToken));
+        assertThat(ownPage.get("total").asLong()).isEqualTo(1L);
+        assertThat(ownPage.get("records").get(0).get("orderNo").asText()).isEqualTo(orderNo);
+    }
+
     /**
      * 轮询直到 fp_pay_order.notify_count >= expected 或超时（15 秒）。
      * 用于测试等异步回调线程把结果落库。
@@ -1328,5 +1418,118 @@ abstract class AbstractFullFlowTest {
     private static class CapturedRequest {
         String method;
         String rawQuery;
+    }
+
+    // =============================================================================
+    // 数据隔离工具：createIsolatedMerchant + MerchantScope
+    // 供新加的专题测试使用（见文件开头「规矩 1」）。存量的 38 条测试没必要改造去用它 ——
+    // 那批测试是共用 it_merchant_01 的一整套剧本，改是 MTM-226 的活。
+    // =============================================================================
+
+    /**
+     * 建一套完整的商户测试上下文：商户 → 登录 → 店铺 → wxpay 通道 → 二维码，一次调好。
+     *
+     * <p>新加专题测试的正确用法（见文件开头的两条规矩）：调一次拿到 {@link MerchantScope} 句柄，
+     * 后续所有下单 / 断言只用句柄里的 merchantNo / shopNo / apiSecret / merchantToken，
+     * 不去共用文件里那个 it_merchant_01 —— 这样谁加数据都不会踩到别人。
+     *
+     * <p>seedTag 是给用户名的可读后缀，便于出错时一眼看出是哪条测试造的数据。建议传"@Order
+     * 值 + 简短标签"，比如 "o50_refundflow"。会自动附加 nanoTime 保证并发唯一。
+     *
+     * <p>兜底：调用方是新加的独立测试、没走过 step1，adminToken 也能被这里自动补上一次登录，
+     * 不必依赖跑测试的顺序。
+     */
+    protected MerchantScope createIsolatedMerchant(String seedTag) throws Exception {
+        ensureAdminLoggedIn();
+
+        String suffix = Long.toHexString(System.nanoTime());
+        String sanitizedTag = (seedTag == null || seedTag.isBlank()) ? "iso"
+                : seedTag.replaceAll("[^a-zA-Z0-9]", "_").toLowerCase();
+        if (sanitizedTag.length() > 15) {
+            sanitizedTag = sanitizedTag.substring(0, 15);
+        }
+        String username = "it_" + sanitizedTag + "_" + suffix;
+        String password = "TestPass123";
+
+        Map<String, Object> createMerchantBody = new LinkedHashMap<>();
+        createMerchantBody.put("merchantName", "IT " + sanitizedTag + " " + suffix);
+        createMerchantBody.put("username", username);
+        createMerchantBody.put("password", password);
+        createMerchantBody.put("contactName", "Tester");
+        createMerchantBody.put("contactPhone", "13800000000");
+        JsonNode merchant = dataOf(postJson("/api/admin/merchant", adminToken, createMerchantBody));
+        Long isoMerchantId = merchant.get("id").asLong();
+        String isoMerchantNo = merchant.get("merchantNo").asText();
+        String isoApiSecret = merchant.get("apiSecret").asText();
+
+        JsonNode loginData = dataOf(postJson("/api/merchant/login", null,
+                Map.of("username", username, "password", password)));
+        String isoMerchantToken = loginData.get("token").asText();
+
+        Map<String, Object> shopBody = new LinkedHashMap<>();
+        shopBody.put("shopName", "IT Shop " + suffix);
+        shopBody.put("description", "isolated shop for " + sanitizedTag);
+        shopBody.put("contactName", "Tester");
+        shopBody.put("contactPhone", "13800000000");
+        JsonNode shop = dataOf(postJson("/api/merchant/shop", isoMerchantToken, shopBody));
+        Long isoShopId = shop.get("id").asLong();
+        String isoShopNo = shop.get("shopNo").asText();
+
+        Map<String, Object> channelBody = new LinkedHashMap<>();
+        channelBody.put("channelName", "iso wxpay " + suffix);
+        channelBody.put("payType", "wxpay");
+        JsonNode channel = dataOf(postJson("/api/merchant/channel", isoMerchantToken, channelBody));
+        Long isoChannelId = channel.get("id").asLong();
+
+        Map<String, Object> qrcodeBody = new LinkedHashMap<>();
+        qrcodeBody.put("shopId", isoShopId);
+        qrcodeBody.put("channelId", isoChannelId);
+        qrcodeBody.put("qrcodeName", "iso qrcode " + suffix);
+        qrcodeBody.put("qrcodeUrl", "weixin://wxpay/bizpayurl?pr=iso" + suffix);
+        JsonNode qrcode = dataOf(postJson("/api/merchant/qrcode", isoMerchantToken, qrcodeBody));
+        Long isoQrcodeId = qrcode.get("id").asLong();
+
+        return new MerchantScope(isoMerchantId, isoMerchantNo, isoApiSecret, isoMerchantToken,
+                isoShopId, isoShopNo, isoChannelId, isoQrcodeId);
+    }
+
+    /**
+     * dev profile 下管理员账号固定为 admin / 123456（见 application-dev.yml）。
+     * 主流程 step1 会拿到 adminToken 存到静态字段；新加的独立测试可能不依赖那条剧本跑过，
+     * 这里做一次幂等的兜底登录，避免调用方还得关心跑测试的顺序。
+     */
+    private void ensureAdminLoggedIn() throws Exception {
+        if (adminToken == null || adminToken.isBlank()) {
+            JsonNode data = dataOf(postJson("/api/admin/login", null,
+                    Map.of("username", "admin", "password", "123456")));
+            adminToken = data.get("token").asText();
+        }
+    }
+
+    /**
+     * {@link #createIsolatedMerchant} 的返回值。所有字段都是这个商户独占的 —— 用它去下单、
+     * 断言，不会跟别的测试造的数据混。字段名跟接口里的名字对齐，方便直接拼签名和请求参数。
+     */
+    protected static final class MerchantScope {
+        public final Long merchantId;
+        public final String merchantNo;
+        public final String apiSecret;
+        public final String merchantToken;
+        public final Long shopId;
+        public final String shopNo;
+        public final Long channelId;
+        public final Long qrcodeId;
+
+        private MerchantScope(Long merchantId, String merchantNo, String apiSecret, String merchantToken,
+                              Long shopId, String shopNo, Long channelId, Long qrcodeId) {
+            this.merchantId = merchantId;
+            this.merchantNo = merchantNo;
+            this.apiSecret = apiSecret;
+            this.merchantToken = merchantToken;
+            this.shopId = shopId;
+            this.shopNo = shopNo;
+            this.channelId = channelId;
+            this.qrcodeId = qrcodeId;
+        }
     }
 }

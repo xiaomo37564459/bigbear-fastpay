@@ -1,0 +1,120 @@
+# 撞车提醒：一开代码提交，机器就告诉你「你改的这些文件，另外还有 X 号提交也在改」。
+#
+# 为什么要有它（MTM-211）：2026-08-20 那天，同一件事被不同的人重复开工了三次，
+# 三次都是各自把活干完、开了 PR 之后才被人事后巡查发现的（#29/#33/#34 改同一组数据库脚本，
+# #30/#31/#32 三分钟内改同一个发版脚本）。每个人自己都没做错，问题是中间没有任何东西
+# 提醒他们「这件事已经有人在做了」，只能靠人事后巡查。
+#
+# ⚠️ 它**只提示，不拦截**：这里不会因为撞车而让检查变红，也没有动任何分支保护。
+#    两路人正当地改同一个文件是常事，一刀切拦死会误伤。
+name: 撞车提醒（你改的文件别人也在改）
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # 为什么还要挂在「推代码」上：GitHub 有个坑 —— 一个 PR 一旦跟主干真的冲突了，
+  # 它就根本不会去跑 PR 上的检查（`conflict-check.yml` 里写了同一件事）。
+  # 而「两个人改同一批文件」恰恰是最容易冲突的情况 —— 最该提醒的时候反而提醒不了。
+  # 推代码这个时机不需要先合并，一定跑得起来，正好补上这个洞。
+  push:
+    branches-ignore:
+      - master
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: '要检查哪个提交（填 PR 号，比如 34）'
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write # 要在 PR 上留/改评论。除此之外什么都不写
+
+# 同一个分支上，PR 事件和推代码事件会前后脚各触发一次；这里只保留最后一次，
+# 免得同时有两路在改同一条评论。
+concurrency:
+  group: pr-overlap-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  overlap:
+    name: 有没有人在改同一批文件
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # 取 PR 分支自己的提交，而不是 GitHub 合好的临时版本 —— 冲突的 PR 上那个临时版本
+      # 根本不存在，取它会直接失败。
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: 先弄清这次要检查哪几个提交
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_FROM_EVENT: ${{ github.event.pull_request.number }}
+          PR_FROM_INPUT: ${{ inputs.pr }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          case "$EVENT" in
+            pull_request) PRS="$PR_FROM_EVENT" ;;
+            workflow_dispatch)
+              # 手动触发填的东西是人敲进去的，后面要当参数用，这里只认纯数字，
+              # 免得有人（或者哪天被人骗着）在输入框里塞一段命令进来。
+              case "$PR_FROM_INPUT" in
+                ''|*[!0-9]*) echo "「$PR_FROM_INPUT」不是一个 PR 号，请填数字，比如 34" \
+                               | tee -a "$GITHUB_STEP_SUMMARY"; PRS="" ;;
+                *) PRS="$PR_FROM_INPUT" ;;
+              esac
+              ;;
+            push)
+              # 推代码的时候可能还没开 PR（很常见：先推分支，再点开 PR）。
+              # 没有就安静收工，等 PR 开出来那一刻的 pull_request 事件再跑。
+              PRS=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number' | tr '\n' ' ')
+              ;;
+            *) PRS="" ;;
+          esac
+          PRS=$(echo "$PRS" | tr -s ' ' | sed 's/^ *//;s/ *$//')
+          if [ -z "$PRS" ]; then
+            echo "这个分支上还没有开着的代码提交，没什么可比的 —— 等你开出 PR 之后会自动再跑一次。" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "prs=$PRS" >> "$GITHUB_OUTPUT"
+
+      - name: 跟其他还开着的提交比一遍，撞了就在 PR 上留提醒
+        if: ${{ steps.pick.outputs.prs != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # 走 env 传，不要写成 ${{ ... }} 直接拼进脚本 —— 那等于把上一步的输出当命令执行
+          PRS: ${{ steps.pick.outputs.prs }}
+        run: |
+          set -uo pipefail
+          for pr in $PRS; do
+            echo "===== 检查 #$pr ====="
+            bash .github/scripts/pr-overlap.sh run "$pr"
+          done
+
+      # 在运行页面顶部留一句人话结论，不用点进日志也看得见
+      - name: 写一句结论到运行摘要
+        if: ${{ always() && steps.pick.outputs.prs != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRS: ${{ steps.pick.outputs.prs }}
+        run: |
+          set -uo pipefail
+          for pr in $PRS; do
+            body=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
+                    --jq '[.[] | select(.body != null and (.body | startswith("<!-- pr-overlap-check")))] | .[-1].body // empty' 2>/dev/null)
+            n=$(printf '%s' "$body" | head -n1 | sed -n 's/.*overlap=\([0-9]*\).*/\1/p')
+            if [ -z "$n" ]; then
+              echo "- #$pr：这次没能比出结果，详情看上面的日志。**不影响任何检查结果。**" >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$n" = "0" ]; then
+              echo "- #$pr：✅ 没跟别人撞 —— 你改的文件目前没有别的提交在动。" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- #$pr：⚠️ 跟 **$n 个**还开着的提交改了同一批文件，已经在 PR 上留了提醒，写清了撞哪几号、撞哪几个文件。**这只是提醒，不挡合并。**" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
