@@ -5,7 +5,9 @@ import {
   ORDER_COLUMN_WIDTHS,
   ORDER_COLUMN_CAPS,
   MEASURED_MIN_WIDTHS,
+  NOTIFY_COUNT_SAMPLE,
   TABLE_WIDTH_AT_1280,
+  formatNotifyCount,
   totalColumnWidth,
   resolveColumnWidths
 } from '@/views/order/columns'
@@ -276,5 +278,82 @@ describe('订单列表 - 金额列要放得下大额订单', () => {
     expect(ORDER_COLUMN_WIDTHS.createTime).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.time)
     expect(ORDER_COLUMN_WIDTHS.payTime).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.time)
     expect(ORDER_COLUMN_WIDTHS.action).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.action)
+  })
+})
+
+/**
+ * 订单列表 - 「通知 N 次」不许折行（MTM-193）
+ *
+ * 老毛病：回调状态列的副行写的是「已通知 3 次」，实测要 92px，而这一列只有 80px。
+ * 次数一上两位数就折成两行，整行跟着从 65px 长到 71px，一列订单忽高忽低没法扫读。
+ *
+ * 这一列压不下去也补不上去：80px 的下限是四个字的表头「回调状态」，跟副行无关；
+ * 整张表在 1280 下又已经排满 974px，没有空位可以补。所以只能让**文案迁就列宽**——
+ * 改成最短的「通知12次」，实测 75px，装得进 80px。
+ *
+ * 下面的像素数同样是在 Chromium 里真渲染量的（1440 / 1280 两档都量过）：
+ *   「已通知 999 次」= 92px  ｜  「通知999次」= 75px  ｜  表头「回调状态」= 80px
+ */
+describe('订单列表 - 回调状态副行不许折行', () => {
+  const withNotifyCount = (count) => ({
+    ...paidOrder,
+    orderNo: `FP2026081910300000${String(count).padStart(4, '0')}`,
+    notifyCount: count
+  })
+
+  it('文案是最短的「通知N次」：「已」和数字两边的空格正好是折行的那几像素，别加回去', () => {
+    expect(formatNotifyCount(1)).toBe('通知1次')
+    expect(formatNotifyCount(12)).toBe('通知12次')
+    expect(formatNotifyCount(999)).toBe('通知999次')
+
+    // 实测基准就是照着这个样本量的（75px）。样本变了，MEASURED_MIN_WIDTHS.notifyCountLine
+    // 必须重新拿浏览器量一遍，不能照着字数估。
+    expect(NOTIFY_COUNT_SAMPLE).toBe('通知999次')
+    expect(NOTIFY_COUNT_SAMPLE).not.toContain(' ')
+    expect(NOTIFY_COUNT_SAMPLE).not.toContain('已')
+  })
+
+  it('1 次 / 12 次 / 999 次三档都按短文案渲染，列表里不再出现「已通知 N 次」', async () => {
+    getOrderPage.mockResolvedValue({
+      data: { records: [1, 12, 999].map(withNotifyCount), total: 3 }
+    })
+    const wrapper = mountList()
+    await flushPromises()
+
+    const lines = wrapper.findAll('.notify-count').map((node) => node.text())
+    expect(lines).toEqual(['通知1次', '通知12次', '通知999次'])
+    expect(lines.join(' ')).not.toContain('已通知')
+  })
+
+  it('没通知过的订单还是不显示这一行，别凭空冒出个「通知0次」', async () => {
+    getOrderPage.mockResolvedValue({ data: { records: [unpaidOrder], total: 1 } })
+    const wrapper = mountList()
+    await flushPromises()
+
+    expect(wrapper.findAll('.notify-count')).toHaveLength(0)
+  })
+
+  it('回调状态列放得下三位数的副行 —— 这就是"不折行"的硬约束', () => {
+    expect(ORDER_COLUMN_WIDTHS.notify).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.notifyCountLine)
+
+    // 这一列是固定宽度，不吃富余宽度，所以窄窗口也是这个宽度，得逐档确认
+    for (const viewport of [1024, 1280, 1366, 1440, 1920]) {
+      const cols = resolveColumnWidths(viewport - 220 - 40 - 40 - 6)
+      expect(cols.notify).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.notifyCountLine)
+    }
+  })
+
+  it('这一列的下限是表头不是副行：压到副行那 75px，折行的就从副行换成表头', () => {
+    // 记这一条是为了挡住下一个人"副行只要 75px，那匀 5px 给金额列吧"的念头。
+    // 实测把 notify 调到 75：副行是不折了，表头「回调状态」当场折成两行，等于白改。
+    expect(MEASURED_MIN_WIDTHS.notifyCountLine).toBeLessThan(MEASURED_MIN_WIDTHS.fourCharHeader)
+    expect(ORDER_COLUMN_WIDTHS.notify).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.fourCharHeader)
+  })
+
+  it('改文案没把整张表挤宽，也没从别的列身上挖肉', () => {
+    expect(totalColumnWidth()).toBe(TABLE_WIDTH_AT_1280)
+    expect(ORDER_COLUMN_WIDTHS.amount).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.amountMillion)
+    expect(ORDER_COLUMN_WIDTHS.orderNo).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.orderNo)
+    expect(ORDER_COLUMN_WIDTHS.merchant).toBe(93)
   })
 })
