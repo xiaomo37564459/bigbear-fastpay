@@ -293,7 +293,7 @@ bigbear-fastpay/
 | merchant_no | VARCHAR(32) | 商户编号（唯一） |
 | merchant_name | VARCHAR(100) | 商户名称 |
 | username | VARCHAR(50) | 登录用户名 |
-| password | VARCHAR(100) | 登录密码（加密） |
+| password | VARCHAR(255) | 登录密码（加密） |
 | api_secret | VARCHAR(64) | API 密钥 |
 | notify_url | VARCHAR(255) | 默认回调地址 |
 | status | TINYINT | 状态：0-禁用，1-启用 |
