@@ -3,7 +3,27 @@
 # 为什么要先合主干：以前经常出现「开发在自己拉分支那天的主干上测试是绿的，等验收时合到最新主干上
 # 其实是红的」，白白多转一轮。这个检查就是把这件事提前到提交代码的那一刻，由机器发现。
 #
-# 本期只报告，不拦截 —— 这里没有配置任何「必须绿才能合并」的规则，也没有动分支保护。
+#
+# ⚠️⚠️⚠️ 改这个文件之前先看这一段 ⚠️⚠️⚠️
+#
+# master 上现在开了分支保护，它是**按名字**点名要下面这四项必须绿才给合并：
+#
+#     2·后端测试 fastpay-server（MySQL + PostgreSQL）
+#     3·前端测试 (fastpay-admin)
+#     3·前端测试 (fastpay-merchant)
+#     4·运维脚本自测（发版验证 + 生产操作锁）
+#
+# 只要改动了上面任何一个名字（包括往括号里多加一个字），GitHub 就再也等不到那个名字了，
+# **所有 PR 会永远卡在「等待检查上报」，而且一声不吭 —— 不报错、不变红，就是合不进去。**
+# 这个坑真踩过一次（MTM-211：往第 4 项名字里加了「+ 撞车提醒」，PR 当场卡死）。
+#
+# 所以：
+#   - 这一格里加了新的自测，**只改步骤（step）的名字，别动 job 的 name**
+#   - 真要改名，必须和改分支保护同时做：先加新名字进保护名单，等新名字上报绿了，再撤旧的。
+#     单独改任何一边都会把所有人堵在门外
+#   - 保护名单在哪看：仓库页 → Settings → Branches → master → Require status checks
+#
+# 「1·先合最新主干」「5·一句话结论」不在保护名单里，改名不会卡住合并。
 name: PR 检查（先合最新主干再跑测试）
 
 on:
@@ -153,7 +173,10 @@ jobs:
   #
   # 这一项很便宜（十几秒）：自测不连数据库、不要服务器、不要 root，只用 bash 跑一遍纯文本比对。
   deploy-verify:
-    name: 4·运维脚本自测（发版验证 + 生产操作锁 + 撞车提醒）
+    # ⚠️⚠️ 这一行的名字不能改，改了所有 PR 都合不进去。原因见文件开头那段警告。
+    #      这一格里现在跑三个脚本的自测（发版验证、生产操作锁、撞车提醒），
+    #      具体跑了哪几个看下面的步骤名，别往这个名字里加。
+    name: 4·运维脚本自测（发版验证 + 生产操作锁）
     needs: merge-master
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -216,9 +239,10 @@ jobs:
           FAILED=""
           [ "${BACKEND_RESULT}"  = "success" ] || FAILED="${FAILED} 后端 fastpay-server；"
           [ "${FRONTEND_RESULT}" = "success" ] || FAILED="${FAILED} 前端 fastpay-admin / fastpay-merchant；"
-          # 这一格里跑了两个脚本的自测，所以提示得同时提两个 —— 只提发版验证的话，
-          # 挂的要是操作锁那个，人会被指到错的文件上（MTM-220）
-          [ "${DEPLOY_RESULT}"   = "success" ] || FAILED="${FAILED} 运维脚本自测（发版验证 deploy/verify-release.sh、生产操作锁 deploy/prod-lock.sh）；"
+          # 这一格里跑了三个脚本的自测，所以提示得把三个都提上 —— 少提一个的话，
+          # 挂的要是没提到的那个，人会被指到错的文件上去查（MTM-220 / MTM-211）。
+          # 以后这一格再加自测，记得回来把这一行也补上。
+          [ "${DEPLOY_RESULT}"   = "success" ] || FAILED="${FAILED} 运维脚本自测（发版验证 deploy/verify-release.sh、生产操作锁 deploy/prod-lock.sh、撞车提醒 .github/scripts/pr-overlap.test.sh）；"
 
           if [ -z "${FAILED}" ]; then
             say "## ✅ 通过：把今天最新的主干合进来之后，全部测试都是绿的"
