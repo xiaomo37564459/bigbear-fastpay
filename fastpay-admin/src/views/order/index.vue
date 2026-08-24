@@ -79,7 +79,7 @@
                 <el-tag :type="getNotifyStatusType(row.notifyStatus)" size="small">
                   {{ getNotifyStatusText(row.notifyStatus) }}
                 </el-tag>
-                <div v-if="row.notifyCount > 0" class="notify-count">已通知 {{ row.notifyCount }} 次</div>
+                <div v-if="row.notifyCount > 0" class="notify-count">{{ formatNotifyCount(row.notifyCount) }}</div>
               </template>
               <span v-else class="text-muted">-</span>
             </template>
@@ -143,7 +143,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getMerchantList, getOrderPage, getOrderByNo, confirmOrder, closeOrder, resendNotify } from '@/api'
 import OrderDetailDialog from './OrderDetailDialog.vue'
-import { resolveColumnWidths, TABLE_WIDTH_AT_1280 } from './columns'
+import { resolveColumnWidths, formatNotifyCount, TABLE_WIDTH_AT_1280 } from './columns'
 import {
   getStatusText,
   getStatusType,
@@ -292,11 +292,18 @@ onBeforeUnmount(() => {
   color: #909399;
 }
 
+/* 回调状态列的副行。这一列只有 80px（下限是四个字的表头「回调状态」，压不下去），
+   文案必须写成最短的「通知12次」——「已通知 12 次」实测要 86px，两位数就折成两行，
+   整行跟着变高 65→71px，一列订单忽高忽低没法扫读（MTM-193）。
+   nowrap 是兜底：万一以后文案变长或次数上四位数，宁可溢出一点也不再折行。
+   这里故意不加 text-overflow: ellipsis —— 截断的是数字，「通知9999次」截成
+   「通知999…」会被看成 999 次，比折行更误导人。 */
 .notify-count {
   font-size: 11px;
   color: #909399;
   margin-top: 2px;
   line-height: 1.3;
+  white-space: nowrap;
 }
 
 /* 单元格左右内边距从 12px 收到 10px：9 列一共省出 36px，
