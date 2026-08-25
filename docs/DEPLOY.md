@@ -432,14 +432,15 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 | `v1.6.0` | `V1_3__order_notify_result_pg.sql` | 订单回调结果落库（MTM-157）：`fp_pay_order` 新增 `notify_result`、`notify_error` 两列 |
 | `v1.7.0` | `V1_5__widen_url_columns_pg.sql` | 订单/商户 URL 列 255→2000 加宽（MTM-209）。生产上这四个字段**已经是 2000 了**（2026-08-19 MTM-151 那晚用应急脚本 `widen-url-cols.sql` 手工加宽过），所以在生产上跑它是空操作，只是把手工那一步固化进正式脚本。但**只要有非生产环境（老 dev/test 库、灾备快照）曾经从旧 init 建起来又没跟着手工加宽，`V1_5` 就必须跑**，否则一走 sub2api 那类带长 URL 的支付流程就会报 `value too long for type character varying(255)` |
 | `v1.8.0` | **无** | 关掉生产 MyBatis 明文 SQL 日志（MTM-239），外加易支付错误提示、商户密码不回显、下单 `expireTime` 改 ISO-8601 等后端小改动，以及商户中心移动端适配（MTM-240）、开发文档页面过期时间写法修正（MTM-176）这两批前端改动，都不动表结构 |
-| **下一版（还没打 tag）** | `V1_6__login_attempt_pg.sql` | 新增 `fp_login_attempt` 表，供后端登录限次记录「哪个账号 / 哪个 IP 连续输错了几次、锁到什么时候」（MTM-162）；漏跑这张表，新版后端一登录就直接报表不存在 |
+| `v1.9.0` | `V1_6__login_attempt_pg.sql` | 新增 `fp_login_attempt` 表，供后端登录限次记录「哪个账号 / 哪个 IP 连续输错了几次、锁到什么时候」（MTM-162）；漏跑这张表，新版后端一登录就直接报表不存在 |
 
-> ✅ **线上现在整版就是 `v1.8.0`，前端 / 后端 / 数据库三者齐平，没有半版状态。**
-> `/opt/fastpay/DEPLOYED_VERSION` 第一行写的就是 `v1.8.0`，跑验证脚本时照着传这个版本号即可。
+> ✅ **线上现在整版就是 `v1.9.0`，前端 / 后端 / 数据库三者齐平，没有半版状态。**
+> `/opt/fastpay/DEPLOYED_VERSION` 第一行写的就是 `v1.9.0`，跑验证脚本时照着传这个版本号即可。
 >
-> - **后端** jar 从 tag `v1.8.0`（提交 `44cc288`）构建，2026-08-25 11:02 上线（MTM-239）
-> - **前端** `fastpay-admin` / `fastpay-merchant` 同样从 tag `v1.8.0` 构建，2026-08-25 14:53 上线（MTM-258）
-> - **数据库**两次都没动：`v1.7.0..v1.8.0` 之间没有新增迁移脚本
+> - **后端** jar 从 tag `v1.9.0`（提交 `496cb35`）构建，2026-08-25 17:28 上线（MTM-267）
+> - **前端** `fastpay-admin` / `fastpay-merchant` 同样从 tag `v1.9.0` 构建，2026-08-25 17:28 上线（MTM-267）
+> - **数据库**本次跑了 `V1_6`（新增 `fp_login_attempt` 表），在重启后端之前执行
+> - 发版前完整备份在 `/root/fastpay-backups/`：`fastpay-20260825-172548-before-v1.9.0.dump` + 旧 jar + `www-pre-v1.9.0-20260825-172548.tar.gz`
 >
 > 📌 **这一版是分两次发上去的，中间有过一段「只发了后端」的半版状态**（2026-08-25 11:02 ~ 14:53）。
 > 那段时间里，开发文档页面写的下单 `expireTime` 还是旧的「时间戳数字」，
