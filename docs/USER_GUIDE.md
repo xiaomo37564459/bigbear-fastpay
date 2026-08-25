@@ -323,7 +323,7 @@ npm run dev
 | 签名验不过、回调收不到怎么排查 | [第十一章](API.md#十一出问题了怎么查) |
 | WebSocket 实时推送怎么接 | [3.7](API.md#37-websocket-实时推送) |
 
-在线接口文档 `/fastpay-server/doc.html` **只有本地开发环境能打开**（默认 `http://localhost:7001/doc.html`）。**线上默认是关掉的，而且是故意关的** —— 把 67 个接口的完整清单公开出去，等于把系统地图直接送给攻击者。所以线上环境有两道锁：
+在线接口文档 `/fastpay-server/doc.html` **只有本地开发环境能打开**（默认 `http://localhost:7001/fastpay-server/doc.html`，后端所有网址都挂在 `/fastpay-server` 前缀下，别漏了）。**线上默认是关掉的，而且是故意关的** —— 把 67 个接口的完整清单公开出去，等于把系统地图直接送给攻击者。所以线上环境有两道锁：
 
 - 后端 `application-prod.yml` 里 `springdoc.api-docs.enabled` 和 `knife4j.enable` 默认都关着；
 - 部署用的 Nginx（`deploy/nginx/pay.copliot.conf`）再挡一层，`/fastpay-server/doc.html` 这类路径直接返回 404。
