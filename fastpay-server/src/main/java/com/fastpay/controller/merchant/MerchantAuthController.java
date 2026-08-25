@@ -4,6 +4,7 @@ import com.fastpay.common.Result;
 import com.fastpay.dto.LoginDTO;
 import com.fastpay.entity.Merchant;
 import com.fastpay.service.MerchantService;
+import com.fastpay.util.ClientIpResolver;
 import com.fastpay.vo.DashboardVO;
 import com.fastpay.vo.LoginVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -41,7 +42,7 @@ public class MerchantAuthController {
     @Operation(summary = "商户登录", description = "商户账号密码登录")
     @PostMapping("/login")
     public Result<LoginVO> login(@Valid @RequestBody LoginDTO dto, HttpServletRequest request) {
-        String ip = getClientIp(request);
+        String ip = ClientIpResolver.resolve(request);
         LoginVO vo = merchantService.login(dto, ip);
         return Result.success("登录成功", vo);
     }
@@ -107,17 +108,4 @@ public class MerchantAuthController {
         return Result.success(config);
     }
 
-    private String getClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("Proxy-Client-IP");
-        }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("WL-Proxy-Client-IP");
-        }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        return ip;
-    }
 }

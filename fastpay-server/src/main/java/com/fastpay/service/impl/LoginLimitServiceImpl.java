@@ -32,6 +32,11 @@ import java.util.Set;
 public class LoginLimitServiceImpl implements LoginLimitService {
 
     private static final String IP_KEY_PREFIX = "ip:";
+    /**
+     * identity_key 列宽是 VARCHAR(200)。超过就截断，避免有人塞一个 500 字符的账号名把登录接口打成 500。
+     * 账号名过长本来就找不到匹配记录（fp_admin.username 只有 100 位），截断也不影响限次能不能挡住这种探测。
+     */
+    private static final int MAX_IDENTITY_KEY_LEN = 190;
 
     private final LoginAttemptMapper attemptMapper;
     private final LoginLimitProperties props;
@@ -223,7 +228,7 @@ public class LoginLimitServiceImpl implements LoginLimitService {
         if (trimmed.isEmpty()) {
             return null;
         }
-        return trimmed.toLowerCase();
+        return capIdentityKey(trimmed.toLowerCase());
     }
 
     private String ipKey(String ip) {
@@ -234,7 +239,12 @@ public class LoginLimitServiceImpl implements LoginLimitService {
         if (trimmed.isEmpty()) {
             return null;
         }
-        return IP_KEY_PREFIX + trimmed;
+        return capIdentityKey(IP_KEY_PREFIX + trimmed);
+    }
+
+    /** 兜住列宽：调用方（ClientIpResolver）已经做过 IP 校验，这里主要防超长账号名把 INSERT 打成 500。 */
+    private String capIdentityKey(String key) {
+        return key.length() > MAX_IDENTITY_KEY_LEN ? key.substring(0, MAX_IDENTITY_KEY_LEN) : key;
     }
 
     private boolean isIpExempt(String ip) {

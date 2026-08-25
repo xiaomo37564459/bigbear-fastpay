@@ -281,6 +281,77 @@ class LoginRateLimitTest {
         }
     }
 
+    // ================= 复检回归（MTM-162 复检 FAIL） =================
+
+    @Test
+    void spoofedXForwardedFor_cannotBypassIpLimit() throws Exception {
+        // QA 复检时用的真实打法：每次换一个假 X-Forwarded-For 头，配合不同账号名密码喷洒。
+        // 老实现把 XFF 整串当钥匙，攻击者每换一个假 IP 就得到一把新钥匙，IP 维度永远攒不满。
+        // 修好之后我们只取 XFF 最后一段（nginx 的 $proxy_add_x_forwarded_for 拼在最后是真实 IP），
+        // 所以哪怕头里塞了 100 个假地址，最后一段仍是同一个 IP，10 次就锁上。
+        int ipMax = limitProps.getIpMaxAttempts();
+        String realBackendIp = "203.0.113.99";
+        for (int i = 1; i <= ipMax; i++) {
+            // 每次 XFF 都不一样但都以 realBackendIp 结尾，模拟 nginx 拼接后的样子
+            String forwarded = String.format("9.9.%d.%d, %s", i, i, realBackendIp);
+            JsonNode body = jsonOf(loginAdminWithXff("target_" + i, "sprayed-password", forwarded));
+            assertThat(body).isNotNull();
+        }
+        // 再打一次，应该被 IP 维度挡下
+        JsonNode next = jsonOf(loginAdminWithXff("target_next", "sprayed-password",
+                "9.9.9.9, " + realBackendIp));
+        assertThat(next.get("code").asInt())
+                .as("XFF 最后一段应稳定命中同一 IP，第 %s 次就锁上", ipMax + 1)
+                .isEqualTo(429);
+        assertThat(next.get("message").asText()).contains("网络登录尝试过多");
+    }
+
+    @Test
+    void xRealIpTakesPriority_evenWhenXForwardedForIsSpoofed() throws Exception {
+        // 一步再兜死：即使攻击者把 X-Real-IP 和 XFF 一起伪造，我们的取值也走 X-Real-IP 分支
+        // （生产 nginx 用 proxy_set_header X-Real-IP $remote_addr 覆盖客户端伪造值，可信）
+        String realIp = "203.0.113.55";
+        int ipMax = limitProps.getIpMaxAttempts();
+        for (int i = 1; i <= ipMax; i++) {
+            jsonOf(loginAdminWithHeaders("real_target_" + i, "spray",
+                    Map.of("X-Real-IP", realIp,
+                           "X-Forwarded-For", "8.8.8." + i)));
+        }
+        JsonNode blocked = jsonOf(loginAdminWithHeaders("real_target_next", "spray",
+                Map.of("X-Real-IP", realIp,
+                       "X-Forwarded-For", "8.8.8.99")));
+        assertThat(blocked.get("code").asInt()).isEqualTo(429);
+    }
+
+    @Test
+    void overlongIpHeader_doesNotCrash_stillEnforcesAccountLimit() throws Exception {
+        // QA 复检时的第二个问题：428 字符 XFF 让接口返回「系统繁忙」（identity_key VARCHAR(200) 溢出）。
+        // 修好后：超长头在 ClientIpResolver 那步就被拒收（走 getRemoteAddr 兜底），
+        // 接口正常返回「用户名或密码错误」；账号维度限次照样能锁。
+        String garbage = "1.2.3.4,".repeat(80); // ~640 字符
+        int max = limitProps.getUserMaxAttempts();
+        for (int i = 0; i < max; i++) {
+            JsonNode body = jsonOf(loginAdminWithXff(ADMIN_USERNAME, "wrong-" + i, garbage));
+            // 关键：不能是「系统繁忙」那个 GlobalExceptionHandler 的兜底 —— 那是数据库炸了才走的
+            assertThat(body.get("message").asText())
+                    .as("超长头不能把接口打成「系统繁忙」")
+                    .doesNotContain("系统繁忙");
+        }
+        // 账号维度照样锁上
+        JsonNode locked = jsonOf(loginAdminWithXff(ADMIN_USERNAME, RAW_PASSWORD, garbage));
+        assertThat(locked.get("code").asInt()).isEqualTo(429);
+    }
+
+    @Test
+    void overlongUsername_doesNotCrash() throws Exception {
+        // 顺带兜住：即使有人塞一个 500 字符的账号名，identity_key 截断到 190 字符，不会溢出 VARCHAR(200)
+        String longUsername = "a".repeat(500);
+        JsonNode body = jsonOf(loginAdmin(longUsername, "any", CLIENT_IP));
+        assertThat(body.get("message").asText())
+                .as("超长账号名不能把接口打成「系统繁忙」")
+                .doesNotContain("系统繁忙");
+    }
+
     @Test
     void merchantAndAdmin_lockedIndependently() throws Exception {
         // 把 admin 打到锁定
@@ -344,6 +415,19 @@ class LoginRateLimitTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
                 .andReturn();
+    }
+
+    private MvcResult loginAdminWithXff(String username, String password, String xff) throws Exception {
+        // 直接把 XFF 头拼一整串给后端，模拟真实攻击场景
+        return postJsonWithIp("/api/admin/login", Map.of("username", username, "password", password), xff);
+    }
+
+    private MvcResult loginAdminWithHeaders(String username, String password, Map<String, String> headers) throws Exception {
+        var req = post("/api/admin/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("username", username, "password", password)));
+        headers.forEach(req::header);
+        return mockMvc.perform(req).andReturn();
     }
 
     private JsonNode jsonOf(MvcResult result) throws Exception {
