@@ -279,7 +279,7 @@ MIGRATION_CHECKS='
   V1_5 | width  | fp_pay_order          | return_url    | 2000     | fail | fp_pay_order.return_url 不够宽（要 ≥2000）—— 补跑 V1_5，同上
   V1_5 | width  | fp_merchant           | notify_url    | 2000     | fail | fp_merchant.notify_url 不够宽（要 ≥2000）—— 补跑 V1_5，同上
   V1_5 | width  | fp_merchant           | return_url    | 2000     | fail | fp_merchant.return_url 不够宽（要 ≥2000）—— 补跑 V1_5，同上
-  V1_6 | table  | fp_login_attempt      |               |          | fail | 缺 fp_login_attempt 表 —— 补跑 V1_6，漏了后端登录限次会启动即报错（MTM-162）
+  V1_6 | table  | fp_login_attempt      |               |          | fail | 缺 fp_login_attempt 表 —— 补跑 V1_6，后端启动本身不报（懒加载），但任何人一登录就会 500（MTM-162）
 '
 
 # 把表整理成干净的一行行：去掉对齐用的空格、去掉注释行和空行
