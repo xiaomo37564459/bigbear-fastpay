@@ -530,7 +530,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
 | `/api/merchant/reset-key` | POST | 否（要登录） | 重置 API 密钥 |
 | `/api/merchant/order/{orderNo}/notify` | POST | 否（要登录） | 手动重发回调 |
 
-服务启动后还可以看在线接口文档：`https://你的域名/fastpay-server/doc.html`
+在线接口文档 `/fastpay-server/doc.html` **只有本地开发能打开**（`http://localhost:7001/fastpay-server/doc.html`）；**线上默认是关掉的**，是有意为之的安全设计（避免把接口清单公开出去当系统地图）。详见 [docs/USER_GUIDE.md](docs/USER_GUIDE.md) 「四、API 对接指南」那节。
 
 ### 原生接口下单：`POST /api/pay/create`
 

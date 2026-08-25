@@ -323,7 +323,12 @@ npm run dev
 | 签名验不过、回调收不到怎么排查 | [第十一章](API.md#十一出问题了怎么查) |
 | WebSocket 实时推送怎么接 | [3.7](API.md#37-websocket-实时推送) |
 
-服务启动后还可以看在线接口文档：`https://你的域名/fastpay-server/doc.html`
+在线接口文档 `/fastpay-server/doc.html` **只有本地开发环境能打开**（默认 `http://localhost:7001/fastpay-server/doc.html`，后端所有网址都挂在 `/fastpay-server` 前缀下，别漏了）。**线上默认是关掉的，而且是故意关的** —— 把 67 个接口的完整清单公开出去，等于把系统地图直接送给攻击者。所以线上环境有两道锁：
+
+- 后端 `application-prod.yml` 里 `springdoc.api-docs.enabled` 和 `knife4j.enable` 默认都关着；
+- 部署用的 Nginx（`deploy/nginx/pay.copliot.conf`）再挡一层，`/fastpay-server/doc.html` 这类路径直接返回 404。
+
+真要临时排查接口，得两处一起放开：把环境变量 `SPRINGDOC_API_DOCS_ENABLED=true` 设上重启后端，再让运维在 Nginx 那条 `location ~ ^/fastpay-server/(...doc\.html...)` 规则上临时放行；用完记得关回去。
 
 ---
 

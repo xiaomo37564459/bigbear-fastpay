@@ -1613,7 +1613,7 @@ location /fastpay-server/ws {
 | `/api/merchant/notify/config` | GET | 否 | **是** | 查监听软件回调地址 |
 | `/api/merchant/order/{orderNo}/notify` | POST | 否 | **是** | 手动重发回调 |
 
-管理后台、商户平台自用的其它管理接口（商户管理、店铺管理、通道管理、订单管理等）不在本文档范围内，服务启动后可以在 `https://你的域名/fastpay-server/doc.html` 看在线接口文档。
+管理后台、商户平台自用的其它管理接口（商户管理、店铺管理、通道管理、订单管理等）不在本文档范围内。**本地开发**时可以在 `http://localhost:7001/fastpay-server/doc.html` 看在线接口文档；**线上默认是关掉的**，是有意为之的安全设计（避免把接口清单公开出去当系统地图）。详见 [USER_GUIDE.md](USER_GUIDE.md) 「四、API 对接指南」那节。
 
 ---
 
