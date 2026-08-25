@@ -36,7 +36,71 @@
     <!-- 二维码列表 -->
     <div class="dev-card">
       <div class="card-body">
-        <el-table :data="qrcodeList" v-loading="loading" stripe>
+        <!--
+          手机上换成卡片：这张表 8 列最少 950px，屏幕只有 375px，
+          右侧固定的「操作」列会浮上来盖住名称、所属店铺、累计收款、状态
+        -->
+        <div v-if="isMobile" v-loading="loading" class="record-list qrcode-card-list">
+          <div v-for="row in qrcodeList" :key="row.id" class="record-card qrcode-card">
+            <div class="rc-head">
+              <el-image
+                v-if="row.qrcodeImage"
+                :src="row.qrcodeImage"
+                :preview-src-list="[row.qrcodeImage]"
+                fit="cover"
+                class="qrcode-card-thumb"
+              />
+              <div v-else class="qr-placeholder qrcode-card-thumb">
+                <el-icon><Grid /></el-icon>
+              </div>
+              <div class="qrcode-card-main">
+                <div class="rc-title">{{ row.qrcodeName || '收款二维码' }}</div>
+                <div class="rc-sub">{{ row.shopName || '-' }}</div>
+              </div>
+              <el-tag class="rc-badge" :type="row.status === 1 ? 'success' : 'danger'" size="small">
+                {{ row.status === 1 ? '启用' : '禁用' }}
+              </el-tag>
+            </div>
+
+            <div class="rc-rows">
+              <div class="rc-row">
+                <span class="rc-label">支付类型</span>
+                <span class="rc-value">
+                  <el-tag :type="row.payType === 'wxpay' ? 'success' : 'primary'" size="small" effect="light">
+                    {{ row.payType === 'wxpay' ? '微信' : '支付宝' }}
+                  </el-tag>
+                </span>
+              </div>
+              <div class="rc-row">
+                <span class="rc-label">累计收款</span>
+                <span class="rc-value"><span class="amount-text">¥{{ row.totalAmount || 0 }}</span></span>
+              </div>
+              <div class="rc-row">
+                <span class="rc-label">创建时间</span>
+                <span class="rc-value">{{ formatTime(row.createTime) }}</span>
+              </div>
+            </div>
+
+            <div class="rc-actions">
+              <el-button type="primary" link size="small" @click="handleView(row)">查看</el-button>
+              <el-button
+                :type="row.status === 1 ? 'warning' : 'success'"
+                link
+                size="small"
+                @click="handleStatus(row, row.status === 1 ? 0 : 1)"
+              >
+                {{ row.status === 1 ? '禁用' : '启用' }}
+              </el-button>
+              <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            </div>
+          </div>
+
+          <div v-if="!loading && qrcodeList.length === 0" class="empty-state">
+            <div class="empty-text">还没有二维码，点上面「添加二维码」创建</div>
+          </div>
+        </div>
+
+        <el-table v-else :data="qrcodeList" v-loading="loading" stripe>
           <el-table-column label="二维码" width="80">
             <template #default="{ row }">
               <el-image
@@ -103,7 +167,8 @@
             v-model:page-size="queryParams.size"
             :page-sizes="[10, 20, 50]"
             :total="total"
-            layout="total, sizes, prev, pager, next"
+            :pager-count="isMobile ? 5 : 7"
+            :layout="isMobile ? 'total, prev, pager, next' : 'total, sizes, prev, pager, next'"
             @size-change="loadData"
             @current-change="loadData"
           />
@@ -176,8 +241,13 @@
  */
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Grid } from '@element-plus/icons-vue'
 import { getShopList, getQrcodePage, addQrcode, updateQrcodeStatus, deleteQrcode } from '@/api'
+import { useIsMobile } from '@/composables/useIsMobile'
 import QRCode from 'qrcode'
+
+// 手机上列表换成卡片，电脑上 isMobile 恒为 false，还是原来那张表
+const { isMobile } = useIsMobile()
 
 const shops = ref([])
 
@@ -346,6 +416,25 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   color: #c0c4cc;
+}
+
+/* 手机卡片：左边一张小图，中间名称 + 店铺，右上角状态 */
+.qrcode-card-thumb {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.qrcode-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.qrcode-card .rc-head {
+  align-items: center;
+  gap: 10px;
 }
 
 .qrcode-uploader {
