@@ -32,6 +32,11 @@
 #   它只能确认「发上去的是对的版本、系统活着、结构对得上」，
 #   确认不了「这一版新改的功能到底对不对」—— 那个还得人登进去点一遍。
 #   完整说明见 docs/RELEASE_VERIFY.md。
+#
+# ⚠️ 这个脚本目前只能验数据库是 PostgreSQL 的机器。MySQL 的机器上跑不了：第五节生成的查询
+#    用的是 PostgreSQL 专有写法（::text、table_schema='public'），MySQL 上直接语法报错。
+#    好在它不会误报绿 —— 配置里填的是 MySQL 地址，脚本认不出来，第一步就判失败拦住。
+#    看到那条失败，不代表你的配置写错了，是脚本还不支持 MySQL。补 MySQL 支持排在 MTM-234。
 
 set -uo pipefail
 
@@ -242,21 +247,34 @@ fi
 #   6 判多重     fail = 判失败，脚本退出码 1；warn = 只提醒，不拦
 #   7 说人话     没通过时打给人看的那句话。写清楚「缺什么、补跑哪个脚本、不补会怎样」
 #
-# fail 还是 warn 的界：**漏跑了会当场出故障、或者会赔钱的判 fail；暂时还撑得住、
-# 但迟早出事的判 warn。**（V1_2 那两条是 warn：bcrypt 只有 60 字符，老的 64 位宽度
-# 眼下还装得下，见 docs/DEPLOY.md。其余几版漏跑都是当场出事，一律 fail。）
+# 第 6 段现在**每一行都是 fail**。以前 V1_2 那两条是 warn（bcrypt 只有 60 字符，老的
+# 64 位宽度眼下还装得下，不会当场出故障），但同一节检查里留一项只提醒，看的人会慢慢
+# 学会「这一节黄一下没关系」，那整节的拦截力就没了。而且这一项本来就不会误报：线上早
+# 就跑过 V1_2 了，真亮起来说明数据库处在没人预期的状态，那本来就该停下来看一眼（MTM-227）。
+#
+# warn 这一档代码里还留着，但**眼下一行都没在用**。将来真要用它，门槛是：漏跑了当天
+# 不会出任何故障，而且能说清楚「什么时候必须补上」—— 说不清楚就写 fail。
 #
 # 改这一段之前先跑一遍 deploy/verify-release.test.sh。这里最要命的错法是「该判 FAIL
 # 的判成了 PASS」—— 那等于告诉发版的人「迁移都跑过了」，而他不会再去核对第二遍。
 MIGRATION_CHECKS='
 # 版本 | 怎么查 | 表名                  | 列名          | 最小宽度 | 判多重 | 没通过时说什么
   V1_1 | column | fp_admin              | token_version |          | fail | fp_admin 缺 token_version 列 —— 补跑 V1_1，漏了后端根本起不来
-  V1_2 | width  | fp_admin              | password      | 255      | warn | fp_admin.password 不够宽（要 ≥255）—— bcrypt 是 60 字符暂时还装得下，不会当场出故障，但请补跑 V1_2
-  V1_2 | width  | fp_merchant           | password      | 255      | warn | fp_merchant.password 不够宽（要 ≥255）—— 同上，请补跑 V1_2
+  V1_1 | width  | fp_admin              | username      | 100      | fail | fp_admin.username 不够宽（要 ≥100）—— 补跑 V1_1，漏了邮箱格式的管理员账号存不进去
+  V1_2 | width  | fp_admin              | password      | 255      | fail | fp_admin.password 不够宽（要 ≥255）—— 补跑 V1_2，漏了以后换更长的加密算法会写不进去，而且说明这个库不在预期状态
+  V1_2 | width  | fp_merchant           | password      | 255      | fail | fp_merchant.password 不够宽（要 ≥255）—— 补跑 V1_2，同上
   V1_3 | column | fp_pay_order          | notify_result |          | fail | fp_pay_order 缺 notify_result 列 —— 补跑 V1_3，漏了谁点开订单详情或订单列表都会报错
   V1_3 | column | fp_pay_order          | notify_error  |          | fail | fp_pay_order 缺 notify_error 列 —— 补跑 V1_3，同上
   V1_4 | table  | fp_pending_pay_amount |               |          | fail | 缺 fp_pending_pay_amount 表 —— 补跑 V1_4，漏了那个「两人同价撞单认错人」的赔钱 bug 原样还在
   V1_4 | table  | fp_unmatched_notify   |               |          | fail | 缺 fp_unmatched_notify 表 —— 补跑 V1_4，漏了「钱到了但认不到订单」的记录存不下来，后端会直接报错
+# 下面四行查的是「这一列够不够宽」。眼下这四列是限长的 varchar(2000)，查得到具体宽度。
+# ★ 哪天把这几列改成不限长度的类型（PostgreSQL 的 text、MySQL 的 TEXT），记得回来看一眼 ★
+#   数据库里的「长度上限」那一栏对不限长类型是空的。现在 mig_ok 的 width 分支专门留了
+#   一档 n/a 接住它（见下面那个函数），会当成通过，所以改类型本身不会把发版误拦下来。
+#   要动的是这两处：mig_sql 里那句 COALESCE(...,'n/a')，和 mig_ok 里 width 那一档。
+#   任一处被改掉、n/a 这条路没了，改类型的那天 V1_5 就会被误判成「没生效」，把发版拦住 ——
+#   而字段其实比要求的还宽，人会顺着提示去补跑一个根本不用跑的迁移脚本，方向正好指反。
+#   另外，真改成不限长类型之后，下面这四句「不够宽（要 ≥2000）」的说法也就过期了，一并改掉。
   V1_5 | width  | fp_pay_order          | notify_url    | 2000     | fail | fp_pay_order.notify_url 不够宽（要 ≥2000）—— 补跑 V1_5，漏了长回调地址写不进去，用户看到「支付通道错误」
   V1_5 | width  | fp_pay_order          | return_url    | 2000     | fail | fp_pay_order.return_url 不够宽（要 ≥2000）—— 补跑 V1_5，同上
   V1_5 | width  | fp_merchant           | notify_url    | 2000     | fail | fp_merchant.notify_url 不够宽（要 ≥2000）—— 补跑 V1_5，同上
@@ -307,6 +325,10 @@ mig_ok() { # mig_ok <怎么查> <查回来的值> <最小宽度>
   case "$1" in
     table)  [ "${2:-0}" -ge 1 ] 2>/dev/null ;;
     column) [ -n "$2" ] ;;
+    # width 这一档的 n/a 是给「不限长度的类型」留的门，别顺手删掉：数据库里的长度上限
+    # 那一栏，对 PostgreSQL 的 text 是空的，mig_sql 用 COALESCE 把空换成了 n/a。
+    # 少了这一行，哪天有人把 notify_url / return_url 改成不限长类型，V1_5 会被误判成
+    # 「没生效」而拦下发版 —— 字段明明比要求的还宽，人却被指去补跑迁移脚本，方向指反。
     width)  if   [ -z "$2" ];      then return 1   # 列压根不在
             elif [ "$2" = 'n/a' ]; then return 0   # 不限长度的类型（TEXT 之类），算过
             else [ "$2" -ge "$3" ] 2>/dev/null; fi ;;
@@ -485,7 +507,11 @@ elif [ -n "$LOCK_TOKEN" ]; then
   if [ -z "$LOCK_TOK" ]; then
     no "你说你这次是拿着 $LOCK_TOKEN 这把锁在动生产，但机器上根本没有人占锁 —— 要么你压根没上锁就动了，要么锁被别人放掉了。两种情况都得先弄清楚，见 docs/DEPLOY.md 第零节"
   elif [ "$LOCK_TOK" = "$LOCK_TOKEN" ]; then
-    ok "这台机器现在只有你在动（锁在 $LOCK_TOK / $LOCK_WHO 手上）。验完记得放开：$OPS_DIR/prod-lock.sh release $LOCK_TOKEN"
+    # 这句话的口径跟 docs/DEPLOY.md 第零节「什么时候放锁」是一套的：锁只保护「机器正在被换」
+    # 那一小段，这个脚本是最后一件要占着机器做的事。跑完就放，别占着做后面的人工验证。
+    # （原来这里写的是「验完记得放开」，跟新规矩正好相反 —— 人照着文档做，脚本却说反话，
+    #   规矩会被脚本自己拆台。MTM-247）
+    ok "这台机器现在只有你在动（锁在 $LOCK_TOK / $LOCK_WHO 手上）。这条脚本跑完机器就不用再动了，立刻放开：$OPS_DIR/prod-lock.sh release $LOCK_TOKEN —— 后面登进后台点一遍、截图、写报告都不用占着机器；万一要回退，重新占一次锁就行（见 docs/DEPLOY.md 第零节「什么时候放锁」）"
   else
     no "有别人正在动这台机器！锁在 $LOCK_TOK（$LOCK_WHO）手上，不是你的 $LOCK_TOKEN。两路人同时动同一台生产服务器 = 上面这些检查结果都不可信，立刻停手，去 $LOCK_TOK 那条 issue 下面对一下"
   fi

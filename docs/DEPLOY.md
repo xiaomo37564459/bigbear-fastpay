@@ -87,18 +87,53 @@ ssh root@150.158.99.251 \
 
 锁不在你手上，这一句会直接让整段命令停住，不会继续往下改机器。
 
-**第三步，干完了一定要放开**（连验证一起做完再放，别验之前就放）：
+**第三步，机器不用再动了就立刻放开。**
 
 ```bash
 ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 ```
+
+「不用再动了」到底截止到哪一步、后面哪些事不用占着机器，见下面「什么时候放锁」那一小节。
+**这条最容易做错，动手前务必看一眼。**
+
+### 什么时候放锁 —— 改完就放，别占着做验证
+
+**这把锁保护的是「机器上的东西正在被换」那一小段时间，不是保护整场发版流程。**
+
+一次发版真正在动机器的部分通常只有几分钟：传 jar、传前端、跑数据库迁移、重启后端、写版本标记，
+再加上紧跟着那一条只读的验证脚本（第三节第 5 步）—— 它要核对的就是你刚换上去的那一版，
+中间不能有别人插进来把东西换掉，所以它算在锁里面。
+
+**那条脚本跑完，机器就不用再动了，立刻放锁。** 从这儿往后的事情，一件都不需要占着机器：
+
+| 这些事要占锁 | 这些事不要占锁 |
+| --- | --- |
+| 传 jar、传前端、跑数据库迁移 | 登进后台按 [发完版怎么确认真的发好了](RELEASE_VERIFY.md) 第二步点一遍 |
+| 重启后端、改服务器上的任何配置 | 截图、贴日志、写验收报告 |
+| 写 `/opt/fastpay/DEPLOYED_VERSION` | 在 issue 里回话、等别人回话、等人拍板 |
+| 回退（换回旧 jar、旧前端） | `curl` 看页面通不通、`systemctl status` 看一眼状态 |
+| 第三节第 5 步那条验证脚本 | 收尾、清理本地文件、下班前的杂事 |
+
+**为什么专门写这一条**：2026-08-24 发 v1.7.0 那次（MTM-202），**真正动机器只花了 3 分钟，
+锁却被占了 176 分钟** —— 中间将近三个小时，别人想动这台机器只能干等着。
+那三个小时里做的是点页面、截图、写报告，一件都不需要占着机器。
+不是谁做错了：当时文档只写了「收工后要放锁」，照着做就一定会变成这样。
+
+**万一验证时发现有问题，要回退、要再动一次机器怎么办？重新占一次锁就行。**
+占锁是一条命令、一秒钟的事。为了这个「万一」一直占着不放，等于拿别人的三个小时，
+去换自己少敲一条命令 —— 这笔账怎么算都不划算。
+
+> ⏱ **占着锁的时候心里有个数：超过 30 分钟还没放，就停下来问自己一句 ——
+> 我这会儿在做的事，真的需要占着这台机器吗？**
+> 十有八九答案是「不需要」。那就先放了，真需要的时候再占一次。
 
 ### 配套的一件事：在 issue 里说一声
 
 锁是给机器看的，issue 是给人看的，**两个都要做**：
 
 - **开工前**在对应 issue 里发一条：「我现在开始动生产服务器了，做 XXX，预计 30 分钟」
-- **收工后**再发一条：「我动完了，锁已经放开」
+- **放锁后马上**再发一条：「机器我不动了，锁已经放开」——
+  这条别拖到验证做完、报告写完才发，**别人等的是机器，不是你的报告**
 
 为什么两个都要：锁只告诉你「现在有人在动」，issue 才说得清「他在动什么、要不要等、能不能一起发」。
 上面那次撞车，两路人各自都以为自己是唯一在动的人 —— 谁都没在 issue 里说一句。
@@ -137,7 +172,7 @@ ssh root@150.158.99.251 'chmod 755 /root/fastpay-ops/prod-lock.sh && /root/fastp
 ### 说清楚这把锁拦得住什么、拦不住什么
 
 **拦得住**：顺手就上。占锁是原子的，两个人同时占必然只有一个成功；谁在动、动多久，一条命令看得见；
-每一次占/放/抢都写进流水，事后一定查得到是谁；发版验证脚本（第三节第 6 步）会把「有别人正在动」直接判成失败。
+每一次占/放/抢都写进流水，事后一定查得到是谁；发版验证脚本（第三节第 5 步）会把「有别人正在动」直接判成失败。
 
 **拦不住**：铁了心要绕。所有人都是用 `root` 登这台机器的，root 想跳过这个脚本随时能跳。
 
@@ -194,15 +229,24 @@ SPRING_PROFILES_ACTIVE=prod
 SERVER_ADDRESS=127.0.0.1
 SERVER_PORT=7001
 DB_DRIVER=org.postgresql.Driver
-DB_URL=jdbc:postgresql://<数据库地址>:<端口>/fastpay
-DB_USERNAME=<用户名>
-DB_PASSWORD=<密码>
-FASTPAY_JWT_SECRET=<一串足够长的随机字符串，用 openssl rand -hex 48 生成>
-FASTPAY_PAGE_DOMAIN=https://pay.copliot.cloud/fastpay-merchant
-FASTPAY_NOTIFY_CALLBACK_URL=https://pay.copliot.cloud/fastpay-server/api/notify/callback
+DB_URL="jdbc:postgresql://<数据库地址>:<端口>/fastpay"
+DB_USERNAME="<用户名>"
+DB_PASSWORD='<密码>'
+FASTPAY_JWT_SECRET="<一串足够长的随机字符串，用 openssl rand -hex 48 生成>"
+FASTPAY_PAGE_DOMAIN="https://pay.copliot.cloud/fastpay-merchant"
+FASTPAY_NOTIFY_CALLBACK_URL="https://pay.copliot.cloud/fastpay-server/api/notify/callback"
 SPRINGDOC_API_DOCS_ENABLED=false
 SPRINGDOC_SWAGGER_UI_ENABLED=false
 ```
+
+> ⚠️ **值上的引号别省。** 这个文件不只被 systemd 读，下面第三节那些备份/迁移命令还会用
+> `set -a; . /etc/fastpay/fastpay-server.env; set +a` 把它读进来 —— 那等于交给命令行去解释，
+> 值里只要有 `&` `|` `;` `#` 或空格，不加引号就会被当成命令语法。
+> 最容易踩的是 `&`：MySQL 的地址常带它（`?useSSL=false&serverTimezone=UTC`），不加引号会被
+> 当成「把前半句丢到后台跑」，实测结果是 `DB_URL` 这个变量压根没被设上、脚本读到的是空的，
+> 然后验证脚本提示「`DB_URL` 格式不对」—— 地址本身其实是好的，人照着提示去改地址只会越改越糊涂。
+> **口令用单引号**（里面的 `$` `` ` `` `\` 按字面走），**其余的值用双引号**。
+> 完整模板和各项说明见 `deploy/fastpay-server.env.example`。
 
 权限必须是 `640 root:fastpay`：
 
@@ -334,8 +378,14 @@ ssh root@150.158.99.251 'bash -s v1.6.0 MTM-210 prod' < deploy/verify-release.sh
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-admin/
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merchant/
 
-# 6. 验完了，把锁放开，别人还等着
+# 6. 到这儿机器就不用再动了 —— 立刻放锁，别人还等着
+#    ⚠️ 就在这儿放，别拖到「登进后台点一遍」「截图」「写完验收报告」之后。
+#       那些事不需要占着机器；万一点出问题要回退，重新占一次锁就行（一条命令的事）。
+#       详见第零节「什么时候放锁」。
 ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
+
+# 7. 放完锁之后再慢慢做：登进后台按 docs/RELEASE_VERIFY.md 第二步点一遍、截图、写验收报告。
+#    这几件事都不用占着机器。
 ```
 
 > 💡 **忘了跑 `v1.2.0` 那个 `V1_1` 会怎样？**
@@ -379,8 +429,8 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 >
 > ✅ **数据库那边：`V1_1`~`V1_4` 都已经跑过了。**（2026-08-20 实测核对：库里 `fp_pending_pay_amount`、
 > `fp_unmatched_notify` 两张表在，`fp_pay_order` 的 `notify_result`、`notify_error`
-> 两列也在；程序 jar 里带的迁移脚本清单跟 `v1.6.0` 一字不差。
-> `V1_5` 那四个 URL 列查出来也已经是 `2000`。见 MTM-210）
+> 两列也在。`V1_5` 那四个 URL 列查出来也已经是 `2000`，见 MTM-210；`V1_5` 脚本本身还没在生产上跑过，
+> 但对已经是 2000 的列跑它是空操作。）
 >
 > ⚠️ 这张表在 2026-08-20 之前写着「线上现在停在 `V1_2`」，**那是错的** —— 写的时候
 > `v1.5.1` / `v1.6.0` 还没发，后来发了却没人回来改这张表。**别再照着记忆写线上状态，
@@ -495,7 +545,7 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 
 **迁移脚本的执行顺序是 `V1_1` → `V1_2` → `V1_3` → `V1_4` → `V1_5` → `V1_6`。** 库落后好几版时按顺序补跑。六个脚本重复跑都不会出事（`V1_4` 里的两条 `UPDATE` 都带 `IS NULL` / `NOT IN (MIN(id))` 条件，第二遍跑就匹配不到任何行了；`INSERT` 也有 `ON CONFLICT DO NOTHING` 兜底；`V1_5` 是纯列宽变更，对已经是 2000 的列再跑是空操作；`V1_6` 用 `CREATE TABLE IF NOT EXISTS` 兜底）。
 
-> ⚠️ **上面那句「五个脚本重复跑都不会出事」只对 PostgreSQL 成立。** 在**原厂 MySQL** 上跑 `V1_1` / `V1_3` 的 `_mysql` 脚本，第一次就会直接报语法错 `ERROR 1064` —— `ADD COLUMN IF NOT EXISTS` 是 MariaDB 的写法，原厂 MySQL 不支持。**执行时把这两个脚本里的 `IF NOT EXISTS` 去掉再跑**，重复执行会报「列已存在」，属正常。（`V1_4` 的 `CREATE TABLE IF NOT EXISTS` 原厂 MySQL 是支持的，`V1_2` / `V1_5` 是纯 `MODIFY COLUMN`：这三个不受影响。）完整说明见上面 `V1_3` 那一段的最后一条。
+> ⚠️ **上面那句「六个脚本重复跑都不会出事」只对 PostgreSQL 成立。** 在**原厂 MySQL** 上跑 `V1_1` / `V1_3` 的 `_mysql` 脚本，第一次就会直接报语法错 `ERROR 1064` —— `ADD COLUMN IF NOT EXISTS` 是 MariaDB 的写法，原厂 MySQL 不支持。**执行时把这两个脚本里的 `IF NOT EXISTS` 去掉再跑**，重复执行会报「列已存在」，属正常。（`V1_4` 和 `V1_6` 的 `CREATE TABLE IF NOT EXISTS` 原厂 MySQL 是支持的，`V1_2` / `V1_5` 是纯 `MODIFY COLUMN`：这四个都不受影响。）完整说明见上面 `V1_3` 那一段的最后一条。
 >
 > 📌 **别把「重复跑安全」当成「不动数据」。** `V1_4` 两样都占：它**第一次跑就是会改订单数据**，但重复跑不会再改第二次。备份该做还得做。
 
@@ -596,11 +646,13 @@ ssh root@150.158.99.251 '
 前端回退：把上一个版本的 `dist` 重新解压覆盖即可。
 
 回退完照样跑一遍验证脚本，版本号写你**退回到的**那一版 —— 确认真的退干净了。
-**验完再放锁**，别验之前就放：
+**脚本一跑完就放锁**：后面登进去点一遍、写事故说明、跟人交代情况，都不用再占着机器
+（第零节「什么时候放锁」）。出事那会儿别人往往更急着要这台机器，别攥在手里。
 
 ```bash
 ssh root@150.158.99.251 'bash -s <退回到的版本> MTM-210 prod' < deploy/verify-release.sh
 
+# 脚本绿了，机器不用再动了 —— 就在这儿放锁
 ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 ```
 
