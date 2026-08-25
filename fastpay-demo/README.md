@@ -16,26 +16,33 @@
 
 ### 1. 配置修改
 
-编辑 `src/main/resources/application.yml`：
+编辑 `src/main/resources/application-dev.yml`（本地开发用的配置文件）。这份文件里的值都写成了 `${环境变量名:默认值}` 的形式，本地跑改默认值就行，上生产再走环境变量。
 
 ```yaml
 fastpay:
-  merchant-no: 您的商户编号
-  api-secret: 您的API密钥
-  gateway-url: http://localhost:9090/fastpay-server
-  notify-url: http://your-domain.com/pay/notify
-  return-url: http://localhost:8080/pay/return
+  # 商户编号（在商户平台获取）
+  merchant-no: ${FASTPAY_DEMO_MERCHANT_NO:your-merchant-no-here}
+  # API 密钥（在商户平台获取）
+  api-secret: ${FASTPAY_DEMO_API_SECRET:your-api-secret-here}
+  # 支付网关地址
+  gateway-url: ${FASTPAY_DEMO_GATEWAY_URL:http://localhost:7001/fastpay-server}
+  # 异步通知地址（需要外网可访问）
+  notify-url: ${FASTPAY_DEMO_NOTIFY_URL:http://localhost:7002/pay/notify}
+  # 同步跳转地址
+  return-url: ${FASTPAY_DEMO_RETURN_URL:http://localhost:7002/pay/return}
 ```
 
 ### 2. 启动项目
 
 ```bash
-mvn spring-boot:run
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ```
+
+⚠️ 一定要带上 `-Dspring-boot.run.profiles=dev`，否则读不到上面的 `application-dev.yml`，商户号、密钥、网关地址一个都加载不进来，服务能起但接口全空。
 
 ### 3. 访问演示
 
-打开浏览器访问：http://localhost:8080
+打开浏览器访问：http://localhost:7002
 
 ## 项目结构
 
@@ -56,7 +63,8 @@ src/main/resources/
 │   ├── page_pay.html           # 页面跳转支付
 │   ├── api_pay.html            # API接口支付
 │   └── result.html             # 支付结果
-└── application.yml             # 配置文件
+├── application-dev.yml         # 开发环境配置（本地跑用这份）
+└── application-prod.yml        # 生产环境配置（部署时由环境变量注入真实值）
 ```
 
 ## 详细文档
