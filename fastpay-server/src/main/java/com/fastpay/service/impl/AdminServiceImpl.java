@@ -12,6 +12,7 @@ import com.fastpay.entity.Admin;
 import com.fastpay.entity.PayOrder;
 import com.fastpay.mapper.*;
 import com.fastpay.service.AdminService;
+import com.fastpay.service.LoginLimitService;
 import com.fastpay.util.JwtUtil;
 import com.fastpay.util.PasswordHasher;
 import com.fastpay.util.PasswordPolicy;
@@ -54,6 +55,7 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
     private final ShopMapper shopMapper;
     private final PayQrcodeMapper payQrcodeMapper;
     private final PayOrderMapper payOrderMapper;
+    private final LoginLimitService loginLimitService;
 
     /**
      * 初始化管理员用户名。生产环境走环境变量（application-prod.yml 里读 FASTPAY_ADMIN_INITIAL_USERNAME）。
@@ -84,33 +86,43 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
 
     public AdminServiceImpl(JwtUtil jwtUtil, MerchantMapper merchantMapper,
                            ShopMapper shopMapper, PayQrcodeMapper payQrcodeMapper,
-                           PayOrderMapper payOrderMapper) {
+                           PayOrderMapper payOrderMapper, LoginLimitService loginLimitService) {
         this.jwtUtil = jwtUtil;
         this.merchantMapper = merchantMapper;
         this.shopMapper = shopMapper;
         this.payQrcodeMapper = payQrcodeMapper;
         this.payOrderMapper = payOrderMapper;
+        this.loginLimitService = loginLimitService;
     }
 
     @Override
     public LoginVO login(LoginDTO dto, String ip) {
+        // 登录限次（MTM-162）：账号或 IP 命中锁定就直接拒；未锁则拿到本次账号维度剩余次数
+        loginLimitService.assertNotLocked(LoginLimitService.SCOPE_ADMIN, dto.getUsername(), ip);
+
         // 查询管理员
         Admin admin = this.getOne(new LambdaQueryWrapper<Admin>()
                 .eq(Admin::getUsername, dto.getUsername()));
 
+        // 账号不存在也要计入限次，否则攻击者可以先枚举账号名再攻密码
         if (admin == null) {
-            throw new BusinessException("用户名或密码错误");
+            int remaining = loginLimitService.registerFailure(LoginLimitService.SCOPE_ADMIN, dto.getUsername(), ip);
+            throw new BusinessException(buildInvalidCredentialMessage(remaining));
         }
 
         // 验证密码：兼容库里遗留的老格式（无盐 MD5）和新格式（bcrypt）
         if (!PasswordHasher.matches(dto.getPassword(), admin.getPassword())) {
-            throw new BusinessException("用户名或密码错误");
+            int remaining = loginLimitService.registerFailure(LoginLimitService.SCOPE_ADMIN, dto.getUsername(), ip);
+            throw new BusinessException(buildInvalidCredentialMessage(remaining));
         }
 
         // 检查状态
         if (!Constants.Status.ENABLED.equals(admin.getStatus())) {
             throw new BusinessException("账号已被禁用");
         }
+
+        // 密码正确、状态正常 —— 清零两把钥匙
+        loginLimitService.registerSuccess(LoginLimitService.SCOPE_ADMIN, dto.getUsername(), ip);
 
         // 老格式账号顺手升级成 bcrypt：用户完全无感，一次登录后这条记录就再也不是 MD5 了
         if (PasswordHasher.isLegacy(admin.getPassword())) {
@@ -438,6 +450,17 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
         vo.setUsername(admin.getUsername());
         vo.setToken(token);
         return vo;
+    }
+
+    /**
+     * 登录失败的提示语：附上账号维度剩余次数，让真的输错的人知道「再错几次要被锁」。
+     * remaining <= 0 时不追加数字（会走到锁定分支被 429 拦掉，不应该走到这里）。
+     */
+    private String buildInvalidCredentialMessage(int remaining) {
+        if (remaining <= 0) {
+            return "用户名或密码错误";
+        }
+        return "用户名或密码错误，还可以尝试 " + remaining + " 次";
     }
 
     private Admin requireAdmin(Long adminId) {

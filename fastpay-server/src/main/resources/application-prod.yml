@@ -113,6 +113,21 @@ fastpay:
     # 监听软件回调地址（完整URL，用于模版展示）
     callback-url: ${FASTPAY_NOTIFY_CALLBACK_URL:https://pay.copliot.cloud/fastpay-server/api/notify/callback}
 
+  # 登录限次（MTM-162）：拦脚本狂试密码，同时尽量不误伤真的输错一两次的人。
+  # 状态存到数据库表 fp_login_attempt，服务重启后不会把攻击者的失败次数清零。
+  # 阈值走默认值就够；想在生产覆盖任意一项：
+  #   FASTPAY_LOGIN_LIMIT_USER_MAX_ATTEMPTS=8
+  #   FASTPAY_LOGIN_LIMIT_IP_MAX_ATTEMPTS=15
+  #   FASTPAY_LOGIN_LIMIT_LOCK_MINUTES=30
+  # 公司出口共用 IP 想只按账号维度限次：
+  #   FASTPAY_LOGIN_LIMIT_IP_WHITELIST=203.0.113.7,198.51.100.9
+  login-limit:
+    user-max-attempts: ${FASTPAY_LOGIN_LIMIT_USER_MAX_ATTEMPTS:5}
+    ip-max-attempts: ${FASTPAY_LOGIN_LIMIT_IP_MAX_ATTEMPTS:10}
+    lock-minutes: ${FASTPAY_LOGIN_LIMIT_LOCK_MINUTES:15}
+    window-minutes: ${FASTPAY_LOGIN_LIMIT_WINDOW_MINUTES:15}
+    ip-whitelist: ${FASTPAY_LOGIN_LIMIT_IP_WHITELIST:}
+
   # CORS 白名单：只有下面列出来的前端地址才能带用户凭证 (cookie / Authorization) 调后端接口。
   # MTM-177：以前是 allowedOriginPatterns("*") + allowCredentials(true)，任意网站都能冒充用户调接口。
   # 生产默认只放行 https://pay.copliot.cloud 这一个域名 —— 这也是当前唯一在跑的前端来源。

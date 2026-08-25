@@ -5,6 +5,7 @@ import com.fastpay.dto.LoginDTO;
 import com.fastpay.dto.UpdatePasswordDTO;
 import com.fastpay.dto.UpdateUsernameDTO;
 import com.fastpay.service.AdminService;
+import com.fastpay.util.ClientIpResolver;
 import com.fastpay.util.PasswordPolicy;
 import com.fastpay.vo.AdminProfileVO;
 import com.fastpay.vo.DashboardVO;
@@ -46,7 +47,7 @@ public class AdminAuthController {
     @Operation(summary = "管理员登录", description = "管理员账号密码登录")
     @PostMapping("/login")
     public Result<LoginVO> login(@Valid @RequestBody LoginDTO dto, HttpServletRequest request) {
-        String ip = getClientIp(request);
+        String ip = ClientIpResolver.resolve(request);
         LoginVO vo = adminService.login(dto, ip);
         return Result.success("登录成功", vo);
     }
@@ -108,20 +109,4 @@ public class AdminAuthController {
         return Result.success(policy);
     }
 
-    /**
-     * 获取客户端IP
-     */
-    private String getClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("Proxy-Client-IP");
-        }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("WL-Proxy-Client-IP");
-        }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        return ip;
-    }
 }
