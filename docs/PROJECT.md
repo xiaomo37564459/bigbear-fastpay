@@ -310,7 +310,7 @@ bigbear-fastpay/
 | shop_no | VARCHAR(32) | 店铺编号 |
 | shop_name | VARCHAR(100) | 店铺名称 |
 | status | TINYINT | 状态 |
-| total_amount | DECIMAL | 累计交易额 |
+| total_amount | DECIMAL(12,2) | 累计交易额 |
 
 #### 支付订单表 (pay_order)
 
@@ -321,8 +321,8 @@ bigbear-fastpay/
 | out_trade_no | VARCHAR(64) | 商户订单号 |
 | merchant_id | BIGINT | 商户ID |
 | shop_id | BIGINT | 店铺ID |
-| amount | DECIMAL | 订单金额 |
-| pay_amount | DECIMAL | 实付金额 |
+| amount | DECIMAL(10,2) | 订单金额 |
+| pay_amount | DECIMAL(10,2) | 实付金额 |
 | pay_type | VARCHAR(20) | 支付类型 |
 | status | TINYINT | 状态：0-待支付，1-已支付，2-已过期，3-已关闭 |
 | notify_url | VARCHAR(2000) | 回调地址 |
