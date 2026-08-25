@@ -15,7 +15,7 @@
 --
 -- 兼容说明：
 --   - 只新增表，不动任何现有表和数据；新老 jar 都能跑（老 jar 忽略这张表）。
---   - 后端 LoginLimitService 在表不存在时会抛异常拒绝启动 —— 所以先跑脚本再上新 jar。
+--   - 后端 LoginLimitService 是懒加载：表不存在时后端能正常启动，但一有人登录就会 500 —— 所以先跑脚本再上新 jar。
 --
 -- 幂等说明：
 --   - CREATE TABLE IF NOT EXISTS + CREATE UNIQUE INDEX IF NOT EXISTS 均可重复执行。
