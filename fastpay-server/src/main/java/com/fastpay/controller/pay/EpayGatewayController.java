@@ -9,6 +9,7 @@ import com.fastpay.entity.PayOrder;
 import com.fastpay.mapper.MerchantMapper;
 import com.fastpay.service.PayOrderService;
 import com.fastpay.util.EpaySignUtil;
+import com.fastpay.util.SensitiveParamMasker;
 import com.fastpay.vo.PayResultVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -71,7 +72,8 @@ public class EpayGatewayController {
             org.springframework.web.bind.annotation.RequestMethod.POST})
     public void submit(HttpServletRequest request, HttpServletResponse response) throws IOException {
         Map<String, String> params = collectParams(request);
-        log.info("易支付 /submit.php 收到请求: params={}", params);
+        // 打日志前对密钥/签名/口令类字段打码（MTM-252）：对接方偶尔会把商户密钥当参数塞进来
+        log.info("易支付 /submit.php 收到请求: params={}", SensitiveParamMasker.mask(params));
 
         try {
             EpayCreateOrderDTO dto = verifyAndBuildDto(params);
@@ -107,7 +109,8 @@ public class EpayGatewayController {
     @ResponseBody
     public Map<String, Object> mapi(HttpServletRequest request) {
         Map<String, String> params = collectParams(request);
-        log.info("易支付 /mapi.php 收到请求: params={}", params);
+        // 打日志前对密钥/签名/口令类字段打码（MTM-252）：对接方偶尔会把商户密钥当参数塞进来
+        log.info("易支付 /mapi.php 收到请求: params={}", SensitiveParamMasker.mask(params));
 
         Map<String, Object> resp = new LinkedHashMap<>();
         try {
