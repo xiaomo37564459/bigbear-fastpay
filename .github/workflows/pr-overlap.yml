@@ -39,11 +39,16 @@ permissions:
   contents: read
   pull-requests: write # 要在 PR 上留/改评论。除此之外什么都不写
 
-# 同一个分支上，PR 事件和推代码事件会前后脚各触发一次；这里只保留最后一次，
-# 免得同时有两路在改同一条评论。
+# 同一个分支上，往 PR 分支推一次代码，「推代码」和「PR 更新」这两个时机会同时各触发一次。
+# 这里把它们排成一队，一个跑完再跑下一个 —— 因为两路会去改同一条评论，同时跑会打架
+# （两边都以为还没有评论，各发一条，PR 底下就多出一条重复的）。
+#
+# ⚠️ 这里刻意用「排队」而不是「掐掉前一个」。第一版用的是掐掉（cancel-in-progress: true），
+#    结果每推一次代码，PR 的检查列表里就多一个「已取消」的灰叉 —— 这一项本来就是拿来给人看的，
+#    旁边挂个叉，人会以为它坏了，然后就不看它了。排队多花十来秒，但每一次都是绿的。
 concurrency:
   group: pr-overlap-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   overlap:
