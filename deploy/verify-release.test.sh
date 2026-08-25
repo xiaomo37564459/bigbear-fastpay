@@ -13,6 +13,11 @@
 # 重点盯的是 mask()：它是专门用来防泄露的，正则动一个字符就可能开一个口子，
 # 而口子不会自己喊疼。MTM-208 就是靠人工复核才发现漏了一种句式，不能再指望运气。
 #
+# 还有一件事只有它拦得住（见第八之四节）：**新加了一版迁移脚本，却忘了给
+# verify-release.sh 的检查表补一行。** 这一节会去 fastpay-server/.../db/migration/ 目录里
+# 现数有几版，跟检查表两边一对，对不上就点名报失败。所以这个测试要在仓库里跑
+# （目录结构在，它才数得到），别只把这一个文件拷到别处跑。
+#
 # 文件里出现的地址全部是 RFC 5737 / RFC 2606 留给举例用的（192.0.2.x、.invalid），
 # 不是任何真实内网地址 —— 测试文件本身也受 docs/SECRETS.md 约束。
 
@@ -244,9 +249,11 @@ hasnt "全跑过了也不许瞎提醒"                '⚠️'                  
 
 O=$(try_db "$(db_without 'C:fp_admin.token_version')")
 has   "缺 token_version 查得出来"          'V1_1 没生效'              "$O"
+# MTM-227 起 V1_2 也报红：同一节检查里留一项只提醒，看的人会慢慢学会「这一节黄一下没关系」
 O=$(try_db "$(db_narrow 'C:fp_admin.password' 60)")
-has   "password 太窄会提醒"                'V1_2 可能没跑'            "$O"
-hasnt "password 太窄只提醒，不判 FAIL"      '❌ FAIL'                  "$O"
+has   "password 太窄：报出了 V1_2"          'V1_2 没生效'              "$O"
+has   "password 太窄：判 FAIL 不再是提醒"   '❌ FAIL'                  "$O"
+hasnt "password 太窄：不许再只提醒一句"     'V1_2 可能没跑'            "$O"
 
 O=$(try_db 'PARSE_FAIL')
 has   "DB_URL 格式不对仍判 FAIL"           'DB_URL 格式不对'          "$O"
@@ -268,6 +275,16 @@ mig_missing '漏跑 V1_3（回调报错列）'     'C:fp_pay_order.notify_error'
 mig_missing '漏跑 V1_4（待支付金额占位表）' 'T:fp_pending_pay_amount'      'V1_4'
 mig_missing '漏跑 V1_4（未匹配收款通知表）' 'T:fp_unmatched_notify'        'V1_4'
 
+# V1_1 除了加 token_version 列，还把管理员用户名从 50 放宽到 100（能存邮箱格式的账号）。
+# 这一项以前没查 —— 文档里写着「每一版改过的表和列都查到了」，那就得说到做到（MTM-227）
+O=$(try_db "$(db_narrow 'C:fp_admin.username' 50)")
+has   "漏跑 V1_1（用户名还是 50）：报出了 V1_1" 'V1_1 没生效'          "$O"
+has   "漏跑 V1_1（用户名还是 50）：判 FAIL"     '❌ FAIL'              "$O"
+
+O=$(try_db "$(db_narrow 'C:fp_merchant.password' 64)")
+has   "漏跑 V1_2（商户密码还是 64）：报出了 V1_2" 'V1_2 没生效'        "$O"
+has   "漏跑 V1_2：判 FAIL"                        '❌ FAIL'            "$O"
+
 O=$(try_db "$(db_narrow 'C:fp_pay_order.notify_url' 255)")
 has   "漏跑 V1_5（URL 列还是 255）：报出了 V1_5" 'V1_5 没生效'          "$O"
 has   "漏跑 V1_5：判 FAIL"                       '❌ FAIL'              "$O"
@@ -277,6 +294,7 @@ mig_missing '漏跑 V1_6（登录限次表）'     'T:fp_login_attempt'         
 # 只漏一版，别的版本不能跟着一起被冤枉 —— 冤枉了，人就会去重跑一堆本来不用跑的脚本
 O=$(try_db "$(db_without 'T:fp_pending_pay_amount')")
 has   "只漏 V1_4 时：V1_1 照样报已生效"          'V1_1 已生效'          "$O"
+has   "只漏 V1_4 时：V1_2 照样报已生效"          'V1_2 已生效'          "$O"
 has   "只漏 V1_4 时：V1_3 照样报已生效"          'V1_3 已生效'          "$O"
 has   "只漏 V1_4 时：V1_5 照样报已生效"          'V1_5 已生效'          "$O"
 has   "只漏 V1_4 时：V1_6 照样报已生效"          'V1_6 已生效'          "$O"
@@ -294,18 +312,105 @@ hasnt "不许一版版报没生效"              '没生效'            "$O"
 has   "说清这几项这次也没查"            '这次也没查'        "$O"
 
 echo
-echo "===== 八之四、那张迁移检查表本身：五版都得管着，每一行都得真被查到 ====="
-# 这一条防的是「表被人不小心改瘦了」：误删几行、或者把 V1_4 那两张表删掉之后，
-# 上面所有测试照样全过 —— 又悄悄退回到只认前两版。所以直接对着表本身钉。
-VER_LIST=$(mig_rows | cut -d'|' -f1)
-for v in V1_1 V1_2 V1_3 V1_4 V1_5 V1_6; do
-  T=$((T+1))
-  case "$VER_LIST" in
-    *"$v"*) printf '  ✅ 表里管着 %s\n' "$v" ;;
-    *)      F=$((F+1)); printf '  ❌ 表里没有 %s —— 这一版漏跑了，脚本查不出来\n' "$v" ;;
-  esac
+echo "===== 八之四、检查表必须和迁移目录对得上（加了新迁移忘了补行，机器当场拦住）====="
+# 这一条盯的是 MTM-214 那个坑的**根因**。
+#
+# 老写法认的是写死的 V1_1~V1_5：所以「有人把表改瘦了」拦得住，但「以后加了 V1_6，
+# 忘了往表里补一行」拦不住 —— 而后者恰恰就是当初出事的方式。文档里立了规矩，可规矩
+# 靠人记、机器不拦，等于没拦。
+#
+# 所以改成不写死任何版本号：直接去 db/migration/ 目录里现数有几版，跟表里的版本号两边
+# 对一遍。目录里有、表里没有的，当场点名报失败；反过来表里有、目录里没有的，也报出来
+# （说明表里留着已经删掉或改过名的版本）。（MTM-227）
+MIG_DIR="$(cd "$(dirname "$0")/.." && pwd)/fastpay-server/src/main/resources/db/migration"
+
+# 目录里到底有哪几版。同一版有 _pg / _mysql 两个文件，去重后只算一版
+mig_dir_versions() {
+  ls "$MIG_DIR" 2>/dev/null | sed -nE 's#^(V[0-9]+_[0-9]+)__.*\.sql$#\1#p' | sort -u
+}
+
+# 极少数迁移脚本确实一行结构都不改（只补一批数据、只建索引），这种版本没有「去数据库里
+# 看什么在不在」可查。**只有这一种情况**才允许它不出现在检查表里：把版本号写进下面这行，
+# 理由写进紧跟着的 MIG_NO_STRUCTURE_WHY。默认是空的 —— 往里加东西等于给自己开一个口子，
+# 加之前先确认清楚，「暂时没想好查什么」不算理由。
+MIG_NO_STRUCTURE_CHECK=''
+# 上面那行真填了版本号，这里就必须写清楚为什么可以不查。两行都会被打印出来给人看（见下）。
+MIG_NO_STRUCTURE_WHY=''
+
+in_list() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# 逃生口一旦真被用上，必须让人一眼看见：那一版从此不进检查表，漏跑了这里也不会拦。
+# 悄悄少查一版比查出问题危险得多 —— 报错还有人看见，「少查了」是安安静静的（MTM-230）。
+# 默认空着时一个字都不打印，别给正常输出添噪音。
+# 注意：这里只负责把话说出来，不改任何一条判定 —— 判定还是上面那两条比对说了算。
+mig_exempt_notice() { # mig_exempt_notice <被豁免的版本列表> <理由>
+  local vers="$1" why="$2"
+  [ -n "$(printf '%s' "$vers" | tr -d '[:space:]')" ] || return 0
+  [ -n "$(printf '%s' "$why"  | tr -d '[:space:]')" ] || why='没写 —— 请在本文件的 MIG_NO_STRUCTURE_WHY 里补上'
+  printf '  ⚠️  以下版本被豁免不查：%s（理由：%s）\n' "$vers" "$why"
+  printf '       豁免 = 这一版没进 verify-release.sh 的检查表，本测试也不会拦。\n'
+  printf '       确认它确实一行结构都没改（只补数据、只建索引），否则请把豁免撤掉、补上检查行。\n'
+}
+mig_exempt_notice "$MIG_NO_STRUCTURE_CHECK" "$MIG_NO_STRUCTURE_WHY"
+
+DIR_VERS=$(mig_dir_versions | tr '\n' ' ')
+TAB_VERS=$(mig_rows | cut -d'|' -f1 | sort -u | tr '\n' ' ')
+
+T=$((T+1))
+if [ -n "$DIR_VERS" ]; then
+  printf '  ✅ 迁移目录里数到这几版：%s\n' "$DIR_VERS"
+else
+  F=$((F+1))
+  printf '  ❌ 在 %s 里一个迁移脚本都没数到 —— 目录挪位置或改名了？先把本文件里的 MIG_DIR 改对，别让这条检查空转\n' "$MIG_DIR"
+fi
+
+# ① 目录里有、表里没有 —— 「加了新迁移忘了补检查」就是这一条拦住的
+T=$((T+1)); MISS_TAB=''
+for v in $DIR_VERS; do
+  in_list "$v" "$TAB_VERS" && continue
+  in_list "$v" "$MIG_NO_STRUCTURE_CHECK" && continue
+  MISS_TAB="$MISS_TAB $v"
 done
-has "版本清单打得出来给人看" 'V1_6' "$(mig_versions)"
+if [ -z "$MISS_TAB" ]; then
+  printf '  ✅ 目录里每一版迁移脚本，检查表里都有对应的行\n'
+else
+  F=$((F+1))
+  printf '  ❌ 这几版在 db/migration/ 里有，但 verify-release.sh 的 MIGRATION_CHECKS 表里没有：%s\n' "$MISS_TAB"
+  printf '       → 去 deploy/verify-release.sh 里给它们各补一行，格式说明就在那张表上面的注释里\n'
+  printf '       → 不补的后果：这一版漏跑了，发版验证照样一路全绿 —— MTM-214 就是这么出的事\n'
+  printf '       → 确实一行结构都没改（只补数据、只建索引），把版本号写进本文件的 MIG_NO_STRUCTURE_CHECK 并注明理由\n'
+fi
+
+# ② 表里有、目录里没有 —— 表里留着已经删掉或改过名的版本
+T=$((T+1)); MISS_DIR=''
+for v in $TAB_VERS; do
+  in_list "$v" "$DIR_VERS" || MISS_DIR="$MISS_DIR $v"
+done
+if [ -z "$MISS_DIR" ]; then
+  printf '  ✅ 检查表里没有目录中已经不存在的版本\n'
+else
+  F=$((F+1))
+  printf '  ❌ 这几版在 MIGRATION_CHECKS 表里有，但 db/migration/ 目录里找不到对应脚本：%s\n' "$MISS_DIR"
+  printf '       → 脚本被删了或改过名，表里那几行要跟着改；也可能只是版本号写错了\n'
+fi
+
+# ③ 反向验一次，确认上面 ① 不是在空转：塞一个目录里根本没有的假版本进去比对，必须被点名。
+#    没有这一条，① 哪天写错成永远为空，红都红不起来，而「拦不住」是安安静静的。
+T=$((T+1)); FAKE_MISS=''
+for v in $DIR_VERS V9_9; do
+  in_list "$v" "$TAB_VERS" || FAKE_MISS="$FAKE_MISS $v"
+done
+if in_list V9_9 "$FAKE_MISS"; then
+  printf '  ✅ 拿假版本 V9_9 试了一次，确实会被点名（说明 ① 真在比对，不是空转）\n'
+else
+  F=$((F+1)); printf '  ❌ 假版本 V9_9 没被点出来 —— ① 那条比对是空转的，先修它\n'
+fi
+
+# 版本清单要打得出来给人看（连不上库时那句「这几项这次也没查」靠它列出是哪几项）
+T=$((T+1)); VLIST=$(printf '%s' "$(mig_versions)" | tr '/' ' '); VMISS=''
+for v in $TAB_VERS; do in_list "$v" "$VLIST" || VMISS="$VMISS $v"; done
+if [ -z "$VMISS" ]; then printf '  ✅ 版本清单打得出来给人看：%s\n' "$(mig_versions)"
+else F=$((F+1)); printf '  ❌ 版本清单里漏了：%s\n' "$VMISS"; fi
 
 # 表里每一行都得真的进到查询语句里，否则等于写了没查
 T=$((T+1))
@@ -316,6 +421,37 @@ while IFS='|' read -r v kind tbl col minw sev msg; do
 done < <(mig_rows)
 if [ -z "$MISS" ]; then printf '  ✅ 表里每一行都进了查询语句\n'
 else F=$((F+1)); printf '  ❌ 这些没进查询语句：%s\n' "$MISS"; fi
+
+# 逃生口（MIG_NO_STRUCTURE_CHECK）被用上时必须有动静，空着时必须一个字都不打印（MTM-230）。
+# 没有这几条，「打印」哪天写坏了也没人知道 —— 而它坏了的表现恰恰是「什么都没打印」，
+# 跟「本来就没人用逃生口」长得一模一样，光看输出根本分不出来。
+O=$(mig_exempt_notice 'V9_8' '只补了一批历史数据，一行结构都没改')
+has   "逃生口被用上：打出了是哪几版"        '被豁免不查：V9_8'                 "$O"
+has   "逃生口被用上：打出了理由"            '理由：只补了一批历史数据'          "$O"
+O=$(mig_exempt_notice 'V9_8' '   ')
+has   "填了版本没写理由：明说理由没写"       'MIG_NO_STRUCTURE_WHY 里补上'      "$O"
+O=$(mig_exempt_notice '' '')
+hasnt "没人用逃生口：不给正常输出添噪音"     '被豁免不查'                       "$O"
+
+echo
+echo "===== 八之五、warn 这一档：眼下一行都没在用，但机制得是活的 ====="
+# MTM-227 把五项口径统一成了「查不到一律拦住」，所以表里现在一行 warn 都没有。
+# 但 warn 这条代码分支还留着，将来真遇到「漏跑了当天不会出任何事」的版本还得靠它。
+# 没有一行用它 = 没有一条测试走过它 = 哪天它坏了没人会知道。所以这里拿一张假表走一遍。
+MIG_SAVE="$MIGRATION_CHECKS"
+MIGRATION_CHECKS='
+  V0_0 | width | fp_admin | password | 255 | warn | 假的一行，只为确认 warn 这条路还通
+'
+O=$(try_db 'PROBE=3
+C:fp_admin.password=60')
+has   "warn 那一档：报的是「可能没跑」"     'V0_0 可能没跑'            "$O"
+hasnt "warn 那一档：不判 FAIL"              '❌ FAIL'                  "$O"
+MIGRATION_CHECKS="$MIG_SAVE"
+
+# 假表必须换回来，否则后面的测试测的就是假表了
+O=$(try_db "$(db_all_good)")
+hasnt "假表已经换回真表"                    'V0_0'                     "$O"
+has   "换回来之后真表照常判定"              'V1_5 已生效'              "$O"
 
 echo
 echo "===== 九、日志段：拿真日志文件跑真代码，从头到尾走一遍 ====="
