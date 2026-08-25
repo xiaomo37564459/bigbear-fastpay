@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { resolve, dirname } from 'path'
 import PayPage from '@/views/pay/index.vue'
 
 /**
@@ -183,6 +186,28 @@ describe('收款页 - 一键复制金额', () => {
     await flushPromises()
 
     expect(JSON.stringify(showToast.mock.calls)).toContain('手动')
+  })
+})
+
+describe('收款页 - 长连接地址不许写死某台机器', () => {
+  // 背景（MTM-235）：这个文件里原来留着一行被注释掉的旧写法，把长连接地址写死成
+  // 一台早就不用的机器。它虽然不执行，但下一个人看到很容易以为要改它、或者顺手
+  // 把注释去掉，结果收款页就连到那台废机器上，扫码付完钱页面永远不跳转。
+  // 这两条测试连注释一起扫，防止这种东西再被留下来。
+  const PAY_PAGE_SOURCE = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../src/views/pay/index.vue'),
+    'utf8'
+  )
+  // 匹配任意写死的 IPv4 地址（比如 192.0.2.1 这种）
+  const HARDCODED_IP = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/
+
+  it('整个文件里连注释都不许出现写死的机器地址', () => {
+    expect(PAY_PAGE_SOURCE).not.toMatch(HARDCODED_IP)
+  })
+
+  it('长连接地址取用户当前访问的域名，部署到哪台机器都能连上', () => {
+    expect(PAY_PAGE_SOURCE).toContain('const host = window.location.host')
+    expect(PAY_PAGE_SOURCE).toContain('`${protocol}//${host}/fastpay-server/ws/pay/')
   })
 })
 

@@ -1,6 +1,7 @@
 package com.fastpay.controller.pay;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fastpay.common.BusinessException;
 import com.fastpay.common.Constants;
 import com.fastpay.dto.EpayCreateOrderDTO;
 import com.fastpay.entity.Merchant;
@@ -50,6 +51,13 @@ public class EpayGatewayController {
     private final PayOrderService payOrderService;
     private final MerchantMapper merchantMapper;
 
+    /**
+     * 内部故障（数据库连不上、依赖服务挂了、未预料异常）时对外的稳定提示。
+     * 一定要是一句能看懂的中文，且**每次一模一样**，方便对接方识别、监控告警按关键字统计。
+     * 具体故障原因只进服务端日志，绝不透给客户端（避免泄漏堆栈 / 类名 / SQL / DB 地址）。
+     */
+    static final String INTERNAL_ERROR_MSG = "服务暂时不可用，请稍后重试";
+
     public EpayGatewayController(PayOrderService payOrderService, MerchantMapper merchantMapper) {
         this.payOrderService = payOrderService;
         this.merchantMapper = merchantMapper;
@@ -69,11 +77,19 @@ public class EpayGatewayController {
             EpayCreateOrderDTO dto = verifyAndBuildDto(params);
             PayResultVO vo = payOrderService.createEpayOrder(dto, getClientIp(request));
             response.sendRedirect(vo.getPayPageUrl());
-        } catch (Exception e) {
-            log.warn("易支付 /submit.php 处理失败: msg={}", e.getMessage());
+        } catch (IllegalArgumentException | BusinessException e) {
+            // 参数/签名/商户校验类（MTM-212）和服务层业务规则类：都是已经产品化的中文提示，原样带出去
+            log.warn("易支付 /submit.php 业务/校验失败: msg={}", e.getMessage());
             response.setContentType("text/plain;charset=UTF-8");
             response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            response.getWriter().write("下单失败：" + e.getMessage());
+            response.getWriter().write("下单失败：" + safeClientMessage(e));
+        } catch (Exception e) {
+            // 内部故障（DB 挂 / 依赖异常 / 未预料的 RuntimeException）：只透一句稳定的中文提示，
+            // 完整堆栈进日志，不进响应体（MTM-225）
+            log.error("易支付 /submit.php 内部处理失败", e);
+            response.setContentType("text/plain;charset=UTF-8");
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("下单失败：" + INTERNAL_ERROR_MSG);
         }
     }
 
@@ -107,10 +123,17 @@ public class EpayGatewayController {
             if (StringUtils.hasText(vo.getQrcodeUrl())) {
                 resp.put("qrcode", vo.getQrcodeUrl());
             }
-        } catch (Exception e) {
-            log.warn("易支付 /mapi.php 处理失败: msg={}", e.getMessage());
+        } catch (IllegalArgumentException | BusinessException e) {
+            // 参数/签名/商户校验类（MTM-212）和服务层业务规则类：都是已经产品化的中文提示，原样带出去
+            log.warn("易支付 /mapi.php 业务/校验失败: msg={}", e.getMessage());
             resp.put("code", -1);
-            resp.put("msg", e.getMessage());
+            resp.put("msg", safeClientMessage(e));
+        } catch (Exception e) {
+            // 内部故障（DB 挂 / 依赖异常 / 未预料的 RuntimeException）：只透一句稳定的中文提示，
+            // 完整堆栈进日志，不进响应体（MTM-225）
+            log.error("易支付 /mapi.php 内部处理失败", e);
+            resp.put("code", -1);
+            resp.put("msg", INTERNAL_ERROR_MSG);
         }
         return resp;
     }
@@ -184,15 +207,35 @@ public class EpayGatewayController {
             resp.put("name", order.getSubject());
             resp.put("money", order.getAmount().toPlainString());
             resp.put("status", Constants.OrderStatus.PAID.equals(order.getStatus()) ? 1 : 0);
-        } catch (Exception e) {
-            log.warn("易支付 /api.php?act=order 处理失败: msg={}", e.getMessage());
+        } catch (IllegalArgumentException | BusinessException e) {
+            // 参数/签名/商户/订单校验类：都是已经产品化的中文提示，原样带出去
+            log.warn("易支付 /api.php?act=order 业务/校验失败: msg={}", e.getMessage());
             resp.put("code", -1);
-            resp.put("msg", e.getMessage());
+            resp.put("msg", safeClientMessage(e));
+        } catch (Exception e) {
+            // 内部故障（DB 挂 / 依赖异常 / 未预料的 RuntimeException）：只透一句稳定的中文提示，
+            // 完整堆栈进日志，不进响应体（MTM-225）
+            log.error("易支付 /api.php?act=order 内部处理失败", e);
+            resp.put("code", -1);
+            resp.put("msg", INTERNAL_ERROR_MSG);
         }
         return resp;
     }
 
     // ---- 内部工具 ----
+
+    /**
+     * 只对「参数校验类 / 业务规则类」异常调用：这两类的 message 是已产品化的中文文案。
+     * 极小概率抛出时 message 为空（比如上游哪天误传了空串），也要兜底成通用提示，
+     * 绝不能把 null / 空串 / "null" 这种字面量透给对接方。
+     */
+    private String safeClientMessage(Exception e) {
+        String msg = e.getMessage();
+        if (msg == null || msg.isBlank()) {
+            return INTERNAL_ERROR_MSG;
+        }
+        return msg;
+    }
 
     /**
      * 把 servlet 参数拍平成 Map。同名多值只保留第一个，够用了 —— 彩虹易支付协议里没有数组参数

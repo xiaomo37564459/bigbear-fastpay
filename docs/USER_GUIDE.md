@@ -22,12 +22,14 @@ cd bigbear-fastpay
 
 #### 步骤二：初始化数据库
 
+数据库名必须叫 `bigbear_fastpay` —— 这是 `application-dev.yml` 默认连的库名（步骤三里能看到）；起别的名字，步骤四启动服务时连不上。
+
 ```sql
 -- 创建数据库
-CREATE DATABASE fastpay DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE bigbear_fastpay DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- 使用数据库
-USE fastpay;
+USE bigbear_fastpay;
 
 -- 执行初始化脚本
 source fastpay-server/src/main/resources/db/init.sql
@@ -35,33 +37,61 @@ source fastpay-server/src/main/resources/db/init.sql
 
 #### 步骤三：配置后端服务
 
-编辑 `fastpay-server/src/main/resources/application.yml`：
+`fastpay-server/src/main/resources/` 底下有两份配置，看你要跑哪种模式：
+
+- `application-dev.yml` —— **本地开发用这份**。数据库、JWT、支付页面域名都写好了本地能直接用的默认值，一行不改也能起来。
+- `application-prod.yml` —— **生产部署用**。里面所有值都要靠环境变量注入，仓库里不留任何真实连接信息；漏配就直接启动失败，避免默认密码上线。
+
+**本地开发就编辑 `fastpay-server/src/main/resources/application-dev.yml`。**里面所有值都写成 `${环境变量名:默认值}` 的形式：改冒号后面的默认值本地立刻生效，上生产走环境变量覆盖，两条路互不打架。
 
 ```yaml
+server:
+  port: 7001
+  servlet:
+    context-path: /fastpay-server
+
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/fastpay?useSSL=false&serverTimezone=Asia/Shanghai
-    username: your_username
-    password: your_password
-
-jwt:
-  secret: your-jwt-secret-key-at-least-32-characters
-  expiration: 86400000  # Token 有效期（毫秒）
+    driver-class-name: ${DB_DRIVER:com.mysql.cj.jdbc.Driver}
+    # 默认连本地 MySQL 的 bigbear_fastpay 库（跟步骤二里创建的库名一致）
+    url: ${DB_URL:jdbc:mysql://localhost:3306/bigbear_fastpay?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    # 默认为空，起服务前先把冒号后面的默认值改成你本机 MySQL 的账号密码
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
 
 fastpay:
+  jwt:
+    # 本地开发用的示意密钥。想换成自己的：环境变量 FASTPAY_JWT_SECRET=$(openssl rand -hex 48) 覆盖
+    secret: ${FASTPAY_JWT_SECRET:dev-only-jwt-secret-do-not-use-in-prod-1a2b3c4d5e6f7890}
+    # Token 有效期（小时）
+    expire-hours: 12
+
+  # 首次启动时数据库里如果还没有管理员，会用这里的账号密码建一个
+  admin:
+    username: admin
+    password: "123456"
+
   pay:
-    order-timeout-minutes: 60  # 订单超时时间（分钟）
-    page-domain: http://localhost:3002  # 支付页面域名
+    # 订单超时时间（分钟）
+    order-timeout-minutes: 3
+    # 支付页面域名（商户前端地址），本地默认指向商户前端 dev server 的 3002 端口
+    page-domain: ${FASTPAY_PAGE_DOMAIN:http://localhost:3002/fastpay-merchant}
 ```
+
+⚠️ 数据库跑不起来最常见的原因就是账号密码没改。示例里的 `${DB_USERNAME:}` 表示「环境变量 DB_USERNAME 没设就用冒号后面的默认值」，冒号后面现在是空的 —— 本地起服务前，要么把冒号后面填成你 MySQL 的账号密码，要么在启动命令里带上 `DB_USERNAME=xxx DB_PASSWORD=yyy` 环境变量。
+
+不要把默认值改成真实生产账号密码往仓库提 —— 提上去公开代码库就等于把线上的钥匙挂在网上。
 
 #### 步骤四：启动后端服务
 
 ```bash
 cd fastpay-server
-mvn spring-boot:run
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-服务地址：http://localhost:9090
+⚠️ 一定要带上 `-Dspring-boot.run.profiles=dev`，否则读不到上面的 `application-dev.yml`，数据库连接、JWT、支付配置一个都加载不进来。项目里没有默认的 `application.yml`，`bootstrap.yml` 也不会自动激活 profile（Spring Boot 3 不读它，只是留档说明）。
+
+服务地址：http://localhost:7001/fastpay-server
 
 #### 步骤五：启动管理后台
 
@@ -73,7 +103,7 @@ npm run dev
 
 访问地址：http://localhost:3001
 
-**默认账号**：`admin` / `admin123`
+**默认账号**：`admin` / `123456`（`application-dev.yml` 里配好的初始管理员，首次启动服务时会自动写进数据库；生产环境是随机生成密码写到启动日志里，不用这个默认值）
 
 #### 步骤六：启动商户平台
 
