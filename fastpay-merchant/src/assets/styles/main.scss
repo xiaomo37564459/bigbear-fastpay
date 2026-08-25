@@ -829,20 +829,235 @@ html, body, #app {
     padding: 10px 12px;
   }
 
+  // 工具条：两排各自占满一行，里面的下拉框、输入框跟着一起拉满。
+  // 不写死宽度的话，页面里那些 style="width: 180px" 会让它们各占一行、参差不齐。
   .table-toolbar {
+    gap: 8px;
+
     .toolbar-left,
     .toolbar-right {
       width: 100%;
+      gap: 8px;
+    }
+
+    // 下拉框、输入框一行两个，各占一半
+    .toolbar-left > *,
+    .toolbar-right > * {
+      flex: 1 1 calc(50% - 4px);
+      min-width: 0;
+    }
+
+    // 左边那组里的按钮（比如二维码管理的「搜索」）保持原来的大小，不要拉满一行 ——
+    // 拉满之后它和右边真正的主按钮「添加二维码」长得一模一样，
+    // 两个满宽的蓝条上下叠着，看不出哪个才是这页要干的正事
+    .toolbar-left .el-button {
+      flex: 0 0 auto;
+    }
+
+    .toolbar-left .el-input,
+    .toolbar-left .el-select,
+    .toolbar-right .el-input,
+    .toolbar-right .el-select {
+      width: 100% !important;
+    }
+
+    // Element 会给挨着的两个按钮自动补左边距，加上 gap 正好放不下两个，
+    // 结果每个按钮独占一行。去掉它，让按钮并排
+    .el-button + .el-button {
+      margin-left: 0;
     }
   }
 
   // 分页在手机上居中，靠右会有一半在屏幕外
   .pagination-wrapper {
     justify-content: center;
+
+    // 「前往 __ 页」这一段在 375px 上会把整条分页顶出屏幕右边 —— 订单管理
+    // 页面往右溢出 27px 就是它干的。手机上直接收起来，翻页靠左右箭头
+    .el-pagination__jump {
+      display: none;
+    }
+
+    .el-pagination {
+      flex-wrap: wrap;
+      justify-content: center;
+      row-gap: 8px;
+    }
   }
 
   .empty-state {
     padding: 40px 16px;
+  }
+}
+
+// ---------- 手机：弹窗和确认框 ----------
+// 弹窗是挂在 <body> 上的，页面里的 scoped 样式够不着，只能写在这个全局文件里。
+// 页面上写的是 width="500px"、width="650px"，屏幕只有 375px —— 弹窗一开就顶出屏幕，
+// 右边的「确定」按钮直接看不见。
+@media (max-width: $mobile-max) {
+  .el-overlay-dialog {
+    // 弹窗超高时让遮罩层自己滚，不要把 body 一起拖动
+    padding: 0 12px;
+  }
+
+  .el-dialog {
+    // Element 把 width="500px" 写成了 --el-dialog-width 这个变量，覆盖它就行
+    --el-dialog-width: 100% !important;
+    --el-dialog-margin-top: 8vh !important;
+    max-width: 100%;
+    margin-right: auto;
+    margin-left: auto;
+
+    .el-dialog__body {
+      // 内容比屏幕高时弹窗内部滚动，底部按钮始终留在屏幕里
+      max-height: 66vh;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .el-dialog__header {
+      padding: 16px 16px 12px;
+    }
+
+    .el-dialog__footer {
+      padding: 0 16px 16px;
+    }
+  }
+
+  // 弹窗里的表单：标签固定 100px 宽，剩给输入框的不到 200px，
+  // 「请输入店铺名称」这种占位文字都显示不全。改成标签在上、输入框占满一行
+  .el-dialog .el-form:not(.el-form--inline) {
+    .el-form-item {
+      display: block;
+      margin-bottom: 16px;
+    }
+
+    .el-form-item__label {
+      width: auto !important;
+      justify-content: flex-start;
+      padding: 0 0 6px;
+      line-height: 1.5;
+    }
+
+    .el-form-item__content {
+      margin-left: 0 !important;
+    }
+  }
+
+  // 「确定要关闭该订单吗」这类确认框默认 420px 宽，比屏幕还宽
+  .el-message-box {
+    width: calc(100vw - 32px) !important;
+    max-width: 420px;
+  }
+}
+
+// ============================================================
+// 手机端的「记录卡片」
+//
+// 订单、通道、二维码这些列表在电脑上是表格，在手机上换成卡片。
+// 表格换不了 —— 9 到 10 列塞进 375px，右侧固定的「操作」列会浮上来
+// 把左边整片内容盖掉（通道管理原来在手机上只剩「通道ID」和四个按钮，
+// 名称、类型、状态、备注、创建时间全被盖住了）。
+//
+// 这套类名是几个页面共用的，长相统一：
+//   .record-card         一条记录一张卡
+//     .rc-head           第一行：主标题 + 右上角状态标签
+//     .rc-sub            副标题，灰色小字
+//     .rc-rows           中间的「名称 —— 值」若干行
+//     .rc-actions        最后一行：操作按钮，靠右
+//
+// 卡片只在手机上渲染（由 useIsMobile 决定），所以这里不用包 @media，
+// 电脑端根本不会有这些节点。
+// ============================================================
+.record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.record-card {
+  border: 1px solid #eceef2;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff;
+
+  .rc-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+
+    .rc-title {
+      flex: 1;
+      min-width: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #303133;
+      // 订单号是 FP + 20 位数字，宁可折行也不许把卡片撑破
+      overflow-wrap: anywhere;
+    }
+
+    // 状态标签是个小圆角块，被拆成两行就不成形了
+    .rc-badge {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+  }
+
+  .rc-sub {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #909399;
+    overflow-wrap: anywhere;
+  }
+
+  .rc-rows {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed #eef0f4;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .rc-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    font-size: 13px;
+
+    .rc-label {
+      width: 66px;
+      flex-shrink: 0;
+      color: #909399;
+    }
+
+    .rc-value {
+      flex: 1;
+      min-width: 0;
+      color: #303133;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  .rc-actions {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #f3f4f7;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px 16px;
+
+    // 手指点得准：链接按钮撑到 32px 高
+    .el-button.is-link {
+      height: 32px;
+      margin-left: 0;
+      padding: 0 2px;
+      font-size: 14px;
+    }
   }
 }
 

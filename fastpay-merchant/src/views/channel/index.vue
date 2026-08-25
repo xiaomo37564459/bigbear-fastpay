@@ -13,8 +13,63 @@
         </el-button>
       </div>
 
-      <!-- 通道列表 -->
-      <el-table :data="channelList" v-loading="loading" stripe>
+      <!--
+        通道列表：手机上换成卡片。
+        这张表 7 列最少要 1010px，屏幕只有 375px，右侧固定的「操作」列会浮上来
+        把左边整片盖住 —— 改之前手机上只看得见「通道ID」和四个按钮，
+        通道名称、支付类型、状态、备注、创建时间一个都看不到。
+      -->
+      <div v-if="isMobile" v-loading="loading" class="record-list channel-card-list">
+        <div v-for="row in channelList" :key="row.id" class="record-card">
+          <div class="rc-head">
+            <div class="rc-title">{{ row.channelName }}</div>
+            <span
+              class="rc-badge status-tag"
+              :class="row.status === 1 ? 'status-enabled' : 'status-disabled'"
+            >{{ row.status === 1 ? '启用' : '禁用' }}</span>
+          </div>
+          <div class="rc-sub">通道 ID {{ row.id }}</div>
+
+          <div class="rc-rows">
+            <div class="rc-row">
+              <span class="rc-label">支付类型</span>
+              <span class="rc-value">
+                <el-tag :type="row.payType === 'wxpay' ? 'success' : 'primary'" size="small" effect="light">
+                  {{ row.payType === 'wxpay' ? '微信支付' : '支付宝' }}
+                </el-tag>
+              </span>
+            </div>
+            <div class="rc-row">
+              <span class="rc-label">备注</span>
+              <span class="rc-value">{{ row.remark || '-' }}</span>
+            </div>
+            <div class="rc-row">
+              <span class="rc-label">创建时间</span>
+              <span class="rc-value">{{ formatTime(row.createTime) }}</span>
+            </div>
+          </div>
+
+          <div class="rc-actions">
+            <el-button
+              :type="row.status === 1 ? 'warning' : 'success'"
+              link
+              size="small"
+              @click="handleStatusChange(row, row.status === 1 ? 0 : 1)"
+            >
+              {{ row.status === 1 ? '禁用' : '启用' }}
+            </el-button>
+            <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
+            <el-button type="primary" link size="small" @click="handleViewTemplate(row)">模版</el-button>
+            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+          </div>
+        </div>
+
+        <div v-if="!loading && channelList.length === 0" class="empty-state">
+          <div class="empty-text">还没有通道，点右上角「新增通道」添加</div>
+        </div>
+      </div>
+
+      <el-table v-else :data="channelList" v-loading="loading" stripe>
         <el-table-column prop="id" label="通道ID" width="80" />
         <el-table-column prop="channelName" label="通道名称" min-width="150" />
         <el-table-column prop="payType" label="支付类型" width="120">
@@ -164,6 +219,10 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, Plus, ChatDotRound, Wallet, CopyDocument, Warning, View, Hide } from '@element-plus/icons-vue'
 import { getChannelList, addChannel, updateChannel, updateChannelStatus, deleteChannel, getNotifyConfig, getMerchantInfo } from '@/api'
+import { useIsMobile } from '@/composables/useIsMobile'
+
+// 手机上列表换成卡片，电脑上 isMobile 恒为 false，还是原来那张表
+const { isMobile } = useIsMobile()
 
 // 通道列表
 const channelList = ref([])
@@ -451,6 +510,39 @@ onMounted(() => {
   font-size: 13px;
   line-height: 1.6;
   width: 100%;
+}
+
+/* ---------- 手机端 ---------- */
+@media (max-width: 767px) {
+  .page-card {
+    padding: 14px;
+  }
+
+  .card-header {
+    margin-bottom: 14px;
+    gap: 10px;
+  }
+
+  /* 「新增通道」按钮不许被标题挤没 */
+  .card-header :deep(.el-button) {
+    flex-shrink: 0;
+  }
+
+  /* 模版弹窗里的「回调地址 / 密钥 + 复制按钮」原来硬排一行，
+     地址一长就把复制按钮顶出弹窗，改成上下排 */
+  .template-content {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .template-content code {
+    font-size: 12px;
+  }
+
+  .template-section {
+    padding: 12px;
+  }
 }
 
 .secret-code {
