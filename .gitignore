@@ -28,6 +28,10 @@ dist
 auto-imports.d.ts
 components.d.ts
 
+# vite 读配置时会在配置文件旁边写一个临时文件，正常跑完会自己删掉；
+# 测试被强行中断时可能残留，别让它混进仓库
+vite.config.js.timestamp-*
+
 # 数据库连接信息，不能进仓库
 PG.txt
 

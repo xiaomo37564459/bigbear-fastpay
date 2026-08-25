@@ -442,7 +442,7 @@
     "amount": 10.00,
     "payType": "wxpay",
     "qrcodeUrl": "wxp://f2f0xxxxx",
-    "expireTime": 1733403600
+    "expireTime": "2026-08-19T12:03:00.422774"
   }
 }</pre>
             </div>
@@ -856,7 +856,7 @@ const apiPayResponse = [
   { name: 'amount', type: 'Number', desc: '订单金额' },
   { name: 'payType', type: 'String', desc: '支付类型' },
   { name: 'qrcodeUrl', type: 'String', desc: '收款码内容（用于生成二维码）' },
-  { name: 'expireTime', type: 'Long', desc: '订单过期时间戳（秒）' }
+  { name: 'expireTime', type: 'String', desc: '订单过期时间，ISO-8601 字符串（例：2026-08-19T12:03:00.422774），和查询接口同格式' }
 ]
 
 // 查询订单参数

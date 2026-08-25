@@ -176,7 +176,9 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         vo.setPayAmount(order.getPayAmount());
         vo.setPayType(order.getPayType());
         vo.setPayMethod(order.getPayMethod());
-        vo.setExpireTime(order.getExpireTime().atZone(java.time.ZoneId.systemDefault()).toEpochSecond());
+        // MTM-176：expireTime 直接把 LocalDateTime 交给 Jackson，序列化成 ISO-8601 字符串，
+        // 和 /api/pay/query、/api/pay/page 保持同一种格式，避免接入方为一个字段写两套解析代码
+        vo.setExpireTime(order.getExpireTime());
 
         if (Constants.PayMethod.API.equals(order.getPayMethod())) {
             // API支付，返回二维码URL
@@ -265,7 +267,8 @@ public class PayOrderServiceImpl extends ServiceImpl<PayOrderMapper, PayOrder> i
         vo.setPayAmount(order.getPayAmount());
         vo.setPayType(order.getPayType());
         vo.setPayMethod(order.getPayMethod());
-        vo.setExpireTime(order.getExpireTime().atZone(java.time.ZoneId.systemDefault()).toEpochSecond());
+        // MTM-176：和 native 下单口径保持一致，交给 Jackson 序列化成 ISO-8601 字符串
+        vo.setExpireTime(order.getExpireTime());
         vo.setQrcodeUrl(qrcode.getQrcodeUrl());
         vo.setPayPageUrl(pageDomain + "/pay/" + order.getOrderNo());
         return vo;

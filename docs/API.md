@@ -264,7 +264,7 @@ sequenceDiagram
     "payMethod": "api",
     "qrcodeUrl": "weixin://wxpay/bizpayurl?pr=xxxxxxxx",
     "payPageUrl": null,
-    "expireTime": 1755561780
+    "expireTime": "2026-08-19T12:03:00.422774"
   },
   "timestamp": 1755561600123
 }
@@ -282,9 +282,7 @@ sequenceDiagram
 | `data.payMethod` | String | 固定 `api` |
 | `data.qrcodeUrl` | String | **收款码里的原始内容**（不是图片链接），你自己拿它生成二维码图片给用户扫 |
 | `data.payPageUrl` | String | 这个接口固定为 `null`（走 `/api/pay/submit` 才有值） |
-| `data.expireTime` | 数字 | 订单过期时间，**10 位秒级时间戳**。默认下单后 **3 分钟**过期（部署方可以改配置项 `fastpay.pay.order-timeout-minutes`，接入前问一下实际值） |
-
-> **⚠️ `expireTime` 在不同接口里格式不一样：** 这里是**秒级时间戳**（数字），而 `/api/pay/query`、`/api/pay/page` 返回的是 `2026-08-19T18:02:31.422774` 这种**时间字符串**。解析的时候别写死一种。（这是历史遗留的口径不统一，已记录待后续统一。）
+| `data.expireTime` | String | 订单过期时间，**ISO-8601 带 `T`、可能带小数秒**（和 `/api/pay/query`、`/api/pay/page` **同一种格式**）。默认下单后 **3 分钟**过期（部署方可以改配置项 `fastpay.pay.order-timeout-minutes`，接入前问一下实际值） |
 
 > **⚠️ 所有时间字符串都是 ISO-8601 格式：`2026-08-19T18:02:31.422774`** —— 中间是**字母 `T`**（不是空格），秒后面**可能带小数**（微秒或纳秒，位数不固定）。用 `yyyy-MM-dd HH:mm:ss` 去解析会直接报错。
 >
@@ -1101,7 +1099,7 @@ curl -X PUT https://your-domain.com/fastpay-server/api/merchant/callback-config 
 
 ### 7.5 `GET /api/merchant/info` —— 查自己的商户信息
 
-**返回**：`data` 是完整商户信息，含 `merchantNo`、`apiKey`、`apiSecret`、`notifyUrl`、`returnUrl`、`status` 等（`password` 字段被置空）。**接入用的商户号和密钥就是从这里来的。**
+**返回**：`data` 是完整商户信息，含 `merchantNo`、`apiKey`、`apiSecret`、`notifyUrl`、`returnUrl`、`status` 等（返回体里不再包含 `password` 字段——密码字段无论加没加密都不会从任何接口回吐）。**接入用的商户号和密钥就是从这里来的。**
 
 ---
 

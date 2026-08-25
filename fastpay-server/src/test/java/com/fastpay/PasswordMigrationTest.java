@@ -26,6 +26,8 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -131,6 +133,57 @@ class PasswordMigrationTest {
         assertThat(wrong.get("code").asInt()).isNotEqualTo(200);
     }
 
+    /**
+     * MTM-195：商户密码从老格式升级成 bcrypt 之后，那条记录的 update_time 必须跟着更新。
+     * 之前 QA 在 MTM-185 验收时发现：库里那条记录密码确实升级了，但 update_time 还停在
+     * 老值，让人事后查"这条数据什么时候被动过"时被误导。
+     *
+     * 复现手段：先把一条老 MD5 商户塞进库、把 update_time 手工写成一个明显较早的时间，
+     * 再走一次登录接口触发升级，然后读回 update_time 断言它一定比种下去的旧值新。
+     */
+    @Test
+    void merchantPasswordUpgrade_alsoRefreshesUpdateTime() throws Exception {
+        String username = "legacy_ts_merchant";
+        LocalDateTime seededOldTime = LocalDateTime.of(2020, 1, 1, 0, 0, 0);
+
+        seedLegacyMerchantWithUpdateTime(username, RAW_PASSWORD, seededOldTime, "LEGACYNO0002");
+
+        // 走一次登录 —— 应当触发老 MD5 -> bcrypt 的自动升级
+        JsonNode login = dataOf(loginMerchant(username, RAW_PASSWORD));
+        assertThat(login.get("token").asText()).isNotBlank();
+
+        // 密码升级本身要成功（保底断言，避免我们只测了 update_time 却把升级本身改坏了）
+        assertThat(readMerchantPassword(username)).startsWith("$2");
+
+        // 核心断言：update_time 必须比之前种下去的旧值新
+        LocalDateTime afterUpdateTime = readMerchantUpdateTime(username);
+        assertThat(afterUpdateTime)
+                .as("商户密码被自动升级后，update_time 应该跟着变（MTM-195）")
+                .isAfter(seededOldTime);
+    }
+
+    /**
+     * MTM-195 对照组：管理员那条本来就是正确的 —— 密码升级后 update_time 也要跟着变。
+     * 加这条一起断言，防止将来有人改动通用填充逻辑时把这个"当前正确"的路径又改坏。
+     */
+    @Test
+    void adminPasswordUpgrade_alsoRefreshesUpdateTime() throws Exception {
+        String username = "legacy_ts_admin";
+        LocalDateTime seededOldTime = LocalDateTime.of(2020, 1, 1, 0, 0, 0);
+
+        seedLegacyAdminWithUpdateTime(username, RAW_PASSWORD, seededOldTime);
+
+        JsonNode login = dataOf(loginAdmin(username, RAW_PASSWORD));
+        assertThat(login.get("token").asText()).isNotBlank();
+
+        assertThat(readAdminPassword(username)).startsWith("$2");
+
+        LocalDateTime afterUpdateTime = readAdminUpdateTime(username);
+        assertThat(afterUpdateTime)
+                .as("管理员密码被自动升级后，update_time 应该跟着变")
+                .isAfter(seededOldTime);
+    }
+
     private void seedLegacyAdmin(String username, String rawPassword) throws Exception {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
@@ -155,6 +208,64 @@ class PasswordMigrationTest {
             ps.setString(5, "legacy-api-key");
             ps.setString(6, "legacy-api-secret");
             ps.executeUpdate();
+        }
+    }
+
+    private void seedLegacyAdminWithUpdateTime(String username, String rawPassword,
+                                                LocalDateTime updateTime) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO fp_admin (username, password, nickname, status, token_version, " +
+                             "create_time, update_time) VALUES (?, ?, ?, 1, 0, ?, ?)")) {
+            ps.setString(1, username);
+            ps.setString(2, SecureUtil.md5(rawPassword));
+            ps.setString(3, "迁移前老账号");
+            ps.setTimestamp(4, Timestamp.valueOf(updateTime));
+            ps.setTimestamp(5, Timestamp.valueOf(updateTime));
+            ps.executeUpdate();
+        }
+    }
+
+    private void seedLegacyMerchantWithUpdateTime(String username, String rawPassword,
+                                                   LocalDateTime updateTime, String merchantNo) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO fp_merchant (merchant_no, merchant_name, username, password, " +
+                             "api_key, api_secret, status, create_time, update_time) " +
+                             "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)")) {
+            ps.setString(1, merchantNo);
+            ps.setString(2, "迁移前老商户");
+            ps.setString(3, username);
+            ps.setString(4, SecureUtil.md5(rawPassword));
+            ps.setString(5, "legacy-api-key-" + username);
+            ps.setString(6, "legacy-api-secret-" + username);
+            ps.setTimestamp(7, Timestamp.valueOf(updateTime));
+            ps.setTimestamp(8, Timestamp.valueOf(updateTime));
+            ps.executeUpdate();
+        }
+    }
+
+    private LocalDateTime readAdminUpdateTime(String username) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT update_time FROM fp_admin WHERE username = ?")) {
+            ps.setString(1, username);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getTimestamp("update_time").toLocalDateTime();
+            }
+        }
+    }
+
+    private LocalDateTime readMerchantUpdateTime(String username) throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT update_time FROM fp_merchant WHERE username = ?")) {
+            ps.setString(1, username);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).isTrue();
+                return rs.getTimestamp("update_time").toLocalDateTime();
+            }
         }
     }
 

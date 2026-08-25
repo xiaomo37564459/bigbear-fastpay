@@ -210,7 +210,9 @@ class DocsApiWalkthroughTest {
         JsonNode info = dataOf(getJson("/api/merchant/info", merchantToken));
         assertThat(info.get("merchantNo").asText()).isEqualTo(merchantNo);
         assertThat(info.get("apiSecret").asText()).isEqualTo(apiSecret);
-        assertThat(info.get("password").isNull()).as("文档说 password 字段被置空").isTrue();
+        // MTM-186：password 字段从所有接口彻底移除（无论加没加密都不该回吐），
+        // 不再是「字段在、值是空」；文档 7.5 已同步改为「返回体里不再包含 password 字段」
+        assertThat(info.has("password")).as("文档承诺 password 字段不再返回").isFalse();
     }
 
     @Test
@@ -269,8 +271,12 @@ class DocsApiWalkthroughTest {
         assertThat(data.get("payMethod").asText()).isEqualTo("api");
         assertThat(data.get("qrcodeUrl").asText()).isNotBlank();
         assertThat(data.get("payPageUrl").isNull()).as("文档说这个接口的 payPageUrl 固定为 null").isTrue();
-        assertThat(data.get("expireTime").isNumber()).as("文档说是秒级时间戳（数字）").isTrue();
-        assertThat(data.get("expireTime").asLong()).isBetween(1_000_000_000L, 9_999_999_999L);
+        // MTM-176：下单接口的 expireTime 已和查询接口统一为 ISO-8601 时间字符串（带 T、可能带小数秒）
+        assertThat(data.get("expireTime").isTextual())
+                .as("文档说 expireTime 是 ISO-8601 时间字符串，和 /api/pay/query 统一")
+                .isTrue();
+        assertThat(data.get("expireTime").asText())
+                .matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?");
     }
 
     @Test

@@ -1,11 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import OrderList from '@/views/order/index.vue'
 import {
   ORDER_COLUMN_WIDTHS,
   ORDER_COLUMN_CAPS,
   MEASURED_MIN_WIDTHS,
+  NOTIFY_COUNT_SAMPLE,
   TABLE_WIDTH_AT_1280,
+  formatNotifyCount,
   totalColumnWidth,
   resolveColumnWidths
 } from '@/views/order/columns'
@@ -75,25 +77,58 @@ const bigAmountOrder = {
   payTime: '2026-08-19T11:02:31'
 }
 
-function mountList() {
-  return mount(OrderList, {
+const orders = [paidOrder, unpaidOrder, bigAmountOrder]
+
+/**
+ * 挂载一次页面，并且一直等到指定行数的订单真的渲染出来为止。
+ *
+ * 这里等的是「条件成立」而不是「等固定一拍」：原来的写法是 mount 完 await 一次
+ * flushPromises 就直接断言，机器忙的时候那一拍不够，断言就扑空。现在改成反复检查
+ * 「表格里够不够行数」，慢就多查几轮，快就立刻返回，结果不再取决于机器当时的手速。
+ *
+ * expectedRows 默认是默认那批假数据的三行；用例自己换了假数据的（比如只放一条），
+ * 必须把真实条数传进来 —— 否则这里会一直等一个永远等不到的行数，白白耗到超时。
+ */
+async function mountAndWaitForRows(expectedRows = orders.length) {
+  const wrapper = mount(OrderList, {
     global: {
       stubs: { Search: true, Refresh: true }
     }
   })
+
+  await vi.waitUntil(
+    async () => {
+      await flushPromises()
+      return wrapper.findAll('.el-table__row').length === expectedRows
+    },
+    { timeout: 20000, interval: 20 }
+  )
+
+  return wrapper
 }
 
-beforeEach(() => {
-  vi.clearAllMocks()
+/**
+ * 整个文件只挂载一次组件。
+ *
+ * 挂载一次带 Element Plus 表格的页面在 jsdom 里要好几秒，原来每条用例各挂一次，
+ * 等于把每条用例都顶到超时线上 —— 这正是它们随机变红的直接原因。下面这些用例
+ * 用的是同一份假数据、而且只读不写（只查 DOM、不点不改），共用一个挂载结果完全安全。
+ */
+let wrapper
+
+beforeAll(async () => {
   getMerchantList.mockResolvedValue({ data: [] })
-  getOrderPage.mockResolvedValue({ data: { records: [paidOrder, unpaidOrder, bigAmountOrder], total: 3 } })
+  getOrderPage.mockResolvedValue({ data: { records: orders, total: orders.length } })
+  wrapper = await mountAndWaitForRows()
+})
+
+afterAll(() => {
+  wrapper?.unmount()
+  wrapper = null
 })
 
 describe('订单列表 - 创建时间要看得全', () => {
-  it('创建时间和支付时间都拆成日期一行、时刻一行，秒不能丢', async () => {
-    const wrapper = mountList()
-    await flushPromises()
-
+  it('创建时间和支付时间都拆成日期一行、时刻一行，秒不能丢', () => {
     const dates = wrapper.findAll('.time-date').map(node => node.text())
     const clocks = wrapper.findAll('.time-clock').map(node => node.text())
 
@@ -102,17 +137,11 @@ describe('订单列表 - 创建时间要看得全', () => {
     expect(clocks).toEqual(['10:30:00', '10:31:08', '10:45:00', '11:02:00', '11:02:31'])
   })
 
-  it('没支付的订单，支付时间显示占位符而不是空白', async () => {
-    const wrapper = mountList()
-    await flushPromises()
-
+  it('没支付的订单，支付时间显示占位符而不是空白', () => {
     expect(wrapper.findAll('.text-muted').length).toBeGreaterThan(0)
   })
 
-  it('平台订单号和商户订单号都还在，只是并成一栏上下两行', async () => {
-    const wrapper = mountList()
-    await flushPromises()
-
+  it('平台订单号和商户订单号都还在，只是并成一栏上下两行', () => {
     const text = wrapper.text()
     expect(text).toContain(paidOrder.orderNo)
     expect(text).toContain(paidOrder.outTradeNo)
@@ -235,10 +264,7 @@ describe('订单列表 - 金额列要放得下大额订单', () => {
     }
   })
 
-  it('大额订单的金额一位数字都不少地渲染出来', async () => {
-    const wrapper = mountList()
-    await flushPromises()
-
+  it('大额订单的金额一位数字都不少地渲染出来', () => {
     const amounts = wrapper.findAll('.amount-text').map(node => node.text())
     expect(amounts).toContain('¥888888.88')
   })
@@ -255,5 +281,85 @@ describe('订单列表 - 金额列要放得下大额订单', () => {
     expect(ORDER_COLUMN_WIDTHS.createTime).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.time)
     expect(ORDER_COLUMN_WIDTHS.payTime).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.time)
     expect(ORDER_COLUMN_WIDTHS.action).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.action)
+  })
+})
+
+/**
+ * 订单列表 - 「通知 N 次」不许折行（MTM-193）
+ *
+ * 老毛病：回调状态列的副行写的是「已通知 3 次」，实测要 92px，而这一列只有 80px。
+ * 次数一上两位数就折成两行，整行跟着从 65px 长到 71px，一列订单忽高忽低没法扫读。
+ *
+ * 这一列压不下去也补不上去：80px 的下限是四个字的表头「回调状态」，跟副行无关；
+ * 整张表在 1280 下又已经排满 974px，没有空位可以补。所以只能让**文案迁就列宽**——
+ * 改成最短的「通知12次」，实测 75px，装得进 80px。
+ *
+ * 下面的像素数同样是在 Chromium 里真渲染量的（1440 / 1280 两档都量过）：
+ *   「已通知 999 次」= 92px  ｜  「通知999次」= 75px  ｜  表头「回调状态」= 80px
+ */
+describe('订单列表 - 回调状态副行不许折行', () => {
+  const withNotifyCount = (count) => ({
+    ...paidOrder,
+    orderNo: `FP2026081910300000${String(count).padStart(4, '0')}`,
+    notifyCount: count
+  })
+
+  it('文案是最短的「通知N次」：「已」和数字两边的空格正好是折行的那几像素，别加回去', () => {
+    expect(formatNotifyCount(1)).toBe('通知1次')
+    expect(formatNotifyCount(12)).toBe('通知12次')
+    expect(formatNotifyCount(999)).toBe('通知999次')
+
+    // 实测基准就是照着这个样本量的（75px）。样本变了，MEASURED_MIN_WIDTHS.notifyCountLine
+    // 必须重新拿浏览器量一遍，不能照着字数估。
+    expect(NOTIFY_COUNT_SAMPLE).toBe('通知999次')
+    expect(NOTIFY_COUNT_SAMPLE).not.toContain(' ')
+    expect(NOTIFY_COUNT_SAMPLE).not.toContain('已')
+  })
+
+  it('1 次 / 12 次 / 999 次三档都按短文案渲染，列表里不再出现「已通知 N 次」', async () => {
+    getOrderPage.mockResolvedValue({
+      data: { records: [1, 12, 999].map(withNotifyCount), total: 3 }
+    })
+    const wrapper = await mountAndWaitForRows(3)
+
+    const lines = wrapper.findAll('.notify-count').map((node) => node.text())
+    expect(lines).toEqual(['通知1次', '通知12次', '通知999次'])
+    expect(lines.join(' ')).not.toContain('已通知')
+
+    wrapper.unmount()
+  })
+
+  it('没通知过的订单还是不显示这一行，别凭空冒出个「通知0次」', async () => {
+    getOrderPage.mockResolvedValue({ data: { records: [unpaidOrder], total: 1 } })
+    // 这条只放一条假数据，行数是 1 不是默认的 3，必须显式传进去
+    const wrapper = await mountAndWaitForRows(1)
+
+    expect(wrapper.findAll('.notify-count')).toHaveLength(0)
+
+    wrapper.unmount()
+  })
+
+  it('回调状态列放得下三位数的副行 —— 这就是"不折行"的硬约束', () => {
+    expect(ORDER_COLUMN_WIDTHS.notify).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.notifyCountLine)
+
+    // 这一列是固定宽度，不吃富余宽度，所以窄窗口也是这个宽度，得逐档确认
+    for (const viewport of [1024, 1280, 1366, 1440, 1920]) {
+      const cols = resolveColumnWidths(viewport - 220 - 40 - 40 - 6)
+      expect(cols.notify).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.notifyCountLine)
+    }
+  })
+
+  it('这一列的下限是表头不是副行：压到副行那 75px，折行的就从副行换成表头', () => {
+    // 记这一条是为了挡住下一个人"副行只要 75px，那匀 5px 给金额列吧"的念头。
+    // 实测把 notify 调到 75：副行是不折了，表头「回调状态」当场折成两行，等于白改。
+    expect(MEASURED_MIN_WIDTHS.notifyCountLine).toBeLessThan(MEASURED_MIN_WIDTHS.fourCharHeader)
+    expect(ORDER_COLUMN_WIDTHS.notify).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.fourCharHeader)
+  })
+
+  it('改文案没把整张表挤宽，也没从别的列身上挖肉', () => {
+    expect(totalColumnWidth()).toBe(TABLE_WIDTH_AT_1280)
+    expect(ORDER_COLUMN_WIDTHS.amount).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.amountMillion)
+    expect(ORDER_COLUMN_WIDTHS.orderNo).toBeGreaterThanOrEqual(MEASURED_MIN_WIDTHS.orderNo)
+    expect(ORDER_COLUMN_WIDTHS.merchant).toBe(93)
   })
 })

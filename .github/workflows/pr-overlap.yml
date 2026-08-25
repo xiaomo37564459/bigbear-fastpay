@@ -7,6 +7,11 @@
 #
 # ⚠️ 它**只提示，不拦截**：这里不会因为撞车而让检查变红，也没有动任何分支保护。
 #    两路人正当地改同一个文件是常事，一刀切拦死会误伤。
+#
+# ⚠️ 「不拦截」也包括**它自己出毛病的时候**（MTM-231 的教训）：脚本取不到、接口抽了、
+#    脚本自己报错了，这一项都得好好地跳过并说清原因，照常算通过。原因很简单 ——
+#    一个会瞎报红的守门，比没有守门更糟：红过两次之后，所有人都学会无视这条红，
+#    那下次真撞车了，提醒照样没人看。
 name: 撞车提醒（你改的文件别人也在改）
 
 on:
@@ -16,6 +21,11 @@ on:
   # 它就根本不会去跑 PR 上的检查（`conflict-check.yml` 里写了同一件事）。
   # 而「两个人改同一批文件」恰恰是最容易冲突的情况 —— 最该提醒的时候反而提醒不了。
   # 推代码这个时机不需要先合并，一定跑得起来，正好补上这个洞。
+  #
+  # 但「推代码」这个时机有个自身的边界（写清楚，别以为它包住了一切）：推代码的时候，GitHub 只认
+  # **被推的那个提交上**有没有这份配置文件。2026-08-24 12:25 之前拉出来的老分支上没有这份文件，
+  # 所以推代码不会触发它 —— 那批分支靠上面的 pull_request 时机覆盖（PR 那边用的是主干合过的版本，
+  # 老分支照样跑得起来）。剩下的缝：老分支 + 真冲突，两个时机都进不来，只能手动跑一次。
   push:
     branches-ignore:
       - master
@@ -41,14 +51,57 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # 取 PR 分支自己的提交，而不是 GitHub 合好的临时版本 —— 冲突的 PR 上那个临时版本
-      # 根本不存在，取它会直接失败。
-      - uses: actions/checkout@v5
+      # 脚本固定取**主干**那一份，不看 PR 分支上有没有。
+      #
+      # 为什么改成这样（MTM-231）：这个脚本是 2026-08-24 12:25 才随 MTM-211 进主干的。
+      # 原来这一步取的是 PR 分支自己的提交（head.sha），在那之前拉出来的分支上根本没有这个文件，
+      # 于是必然 `bash: .github/scripts/pr-overlap.sh: No such file or directory` + 退出码 127，
+      # 这一项一律报红 —— 而上面明明写着「只提示，不拦截」。更要命的是最该提醒的恰恰是那批老分支
+      # （存在越久越容易跟别人撞），结果它们全落在盲区里。一个会瞎报红的守门，比没有守门更糟。
+      #
+      # 也不能取 GitHub 合好的临时版本（refs/pull/N/merge）：PR 一旦跟主干真的冲突，那个临时版本
+      # 根本不存在，取它会直接失败 —— 这是原来避开它的理由，那个理由本身仍然成立。
+      # 主干这一份任何时候都在，不管分支是什么时候拉的、有没有冲突。
+      #
+      # 这个脚本要的数据全部走 GitHub 接口现拿（改了哪些文件、还开着哪些提交、评论），
+      # 根本不读 PR 分支上的文件，所以不取分支什么都不损失。
+      #
+      # 顺带一个好处：不再执行 PR 分支带进来的脚本。这个任务手里有「在 PR 上写评论」的权限，
+      # 让分支来决定跑什么代码本来就不合适。
+      #
+      # 代价（写明白，别以后有人踩）：改这个脚本本身的 PR，这一项跑的是主干那版，不是分支那版。
+      # 分支那版由 `4·运维脚本自测` 里的 pr-overlap.test.sh 兜住（纯离线自测，不联网）。
+      - name: 取撞车提醒脚本（固定取主干那一份）
+        # 连取脚本这一步都失败，也不许让这一项变红。下一步会说清原因并跳过。
+        continue-on-error: true
+        uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.repository.default_branch || 'master' }}
+          persist-credentials: false
+
+      # 底线在这一步：脚本没取到，就好好地跳过并说清原因，绝不让这一项变红。
+      - name: 看看脚本到底在不在
+        id: guard
+        env:
+          SCRIPT: .github/scripts/pr-overlap.sh
+        run: |
+          set -uo pipefail
+          if [ -r "$SCRIPT" ]; then
+            echo "ok=yes" >> "$GITHUB_OUTPUT"
+            echo "脚本在：$SCRIPT"
+            exit 0
+          fi
+          echo "ok=" >> "$GITHUB_OUTPUT"
+          echo "::warning::撞车提醒这次跳过了：没取到主干上的 $SCRIPT。这一项照常算通过，不影响任何检查结果。"
+          {
+            printf '### 这次跳过了 —— 不是撞车，也不是出错\n\n'
+            printf '撞车提醒要用的脚本 `%s` 这次没取到（上一步「取撞车提醒脚本」没成功），所以这次没有替你比对。\n\n' "$SCRIPT"
+            printf '**这一项照常算通过，不挡任何合并。** 想知道为什么没取到，点上一步的日志。\n'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 先弄清这次要检查哪几个提交
         id: pick
+        if: ${{ steps.guard.outputs.ok != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -84,7 +137,7 @@ jobs:
           echo "prs=$PRS" >> "$GITHUB_OUTPUT"
 
       - name: 跟其他还开着的提交比一遍，撞了就在 PR 上留提醒
-        if: ${{ steps.pick.outputs.prs != '' }}
+        if: ${{ steps.guard.outputs.ok != '' && steps.pick.outputs.prs != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -94,12 +147,17 @@ jobs:
           set -uo pipefail
           for pr in $PRS; do
             echo "===== 检查 #$pr ====="
-            bash .github/scripts/pr-overlap.sh run "$pr"
+            bash .github/scripts/pr-overlap.sh run "$pr" \
+              || echo "::warning::#$pr 这次没比出来（脚本自己以非 0 退出码结束了）。这一项照常算通过，不影响任何检查结果。"
           done
+          # 这一步永远以 0 收尾。这一项自己声明了「只提示，不拦截」，那就不许因为它自身的毛病
+          # 去让别人的检查变红（MTM-231）。真出错了，上面已经写成 warning，运行摘要里也会写
+          # 「这次没能比出结果」—— 是响的，不是哑的。
+          exit 0
 
       # 在运行页面顶部留一句人话结论，不用点进日志也看得见
       - name: 写一句结论到运行摘要
-        if: ${{ always() && steps.pick.outputs.prs != '' }}
+        if: ${{ always() && steps.guard.outputs.ok != '' && steps.pick.outputs.prs != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
