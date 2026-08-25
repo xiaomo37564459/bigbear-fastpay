@@ -297,7 +297,7 @@ bigbear-fastpay/
 | username | VARCHAR(50) | 登录用户名 |
 | password | VARCHAR(255) | 登录密码（加密） |
 | api_secret | VARCHAR(64) | API 密钥 |
-| notify_url | VARCHAR(255) | 默认回调地址 |
+| notify_url | VARCHAR(2000) | 默认回调地址 |
 | status | TINYINT | 状态：0-禁用，1-启用 |
 | create_time | DATETIME | 创建时间 |
 
@@ -325,7 +325,7 @@ bigbear-fastpay/
 | pay_amount | DECIMAL | 实付金额 |
 | pay_type | VARCHAR(20) | 支付类型 |
 | status | TINYINT | 状态：0-待支付，1-已支付，2-已过期，3-已关闭 |
-| notify_url | VARCHAR(255) | 回调地址 |
+| notify_url | VARCHAR(2000) | 回调地址 |
 | return_url | VARCHAR(255) | 跳转地址 |
 | notify_status | TINYINT | 回调状态：0-未通知，1-成功，2-失败 |
 | notify_count | INT | 回调次数 |
