@@ -229,15 +229,24 @@ SPRING_PROFILES_ACTIVE=prod
 SERVER_ADDRESS=127.0.0.1
 SERVER_PORT=7001
 DB_DRIVER=org.postgresql.Driver
-DB_URL=jdbc:postgresql://<数据库地址>:<端口>/fastpay
-DB_USERNAME=<用户名>
-DB_PASSWORD=<密码>
-FASTPAY_JWT_SECRET=<一串足够长的随机字符串，用 openssl rand -hex 48 生成>
-FASTPAY_PAGE_DOMAIN=https://pay.copliot.cloud/fastpay-merchant
-FASTPAY_NOTIFY_CALLBACK_URL=https://pay.copliot.cloud/fastpay-server/api/notify/callback
+DB_URL="jdbc:postgresql://<数据库地址>:<端口>/fastpay"
+DB_USERNAME="<用户名>"
+DB_PASSWORD='<密码>'
+FASTPAY_JWT_SECRET="<一串足够长的随机字符串，用 openssl rand -hex 48 生成>"
+FASTPAY_PAGE_DOMAIN="https://pay.copliot.cloud/fastpay-merchant"
+FASTPAY_NOTIFY_CALLBACK_URL="https://pay.copliot.cloud/fastpay-server/api/notify/callback"
 SPRINGDOC_API_DOCS_ENABLED=false
 SPRINGDOC_SWAGGER_UI_ENABLED=false
 ```
+
+> ⚠️ **值上的引号别省。** 这个文件不只被 systemd 读，下面第三节那些备份/迁移命令还会用
+> `set -a; . /etc/fastpay/fastpay-server.env; set +a` 把它读进来 —— 那等于交给命令行去解释，
+> 值里只要有 `&` `|` `;` `#` 或空格，不加引号就会被当成命令语法。
+> 最容易踩的是 `&`：MySQL 的地址常带它（`?useSSL=false&serverTimezone=UTC`），不加引号会被
+> 当成「把前半句丢到后台跑」，实测结果是 `DB_URL` 这个变量压根没被设上、脚本读到的是空的，
+> 然后验证脚本提示「`DB_URL` 格式不对」—— 地址本身其实是好的，人照着提示去改地址只会越改越糊涂。
+> **口令用单引号**（里面的 `$` `` ` `` `\` 按字面走），**其余的值用双引号**。
+> 完整模板和各项说明见 `deploy/fastpay-server.env.example`。
 
 权限必须是 `640 root:fastpay`：
 

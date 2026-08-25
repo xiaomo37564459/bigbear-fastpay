@@ -328,11 +328,27 @@ mig_dir_versions() {
 
 # 极少数迁移脚本确实一行结构都不改（只补一批数据、只建索引），这种版本没有「去数据库里
 # 看什么在不在」可查。**只有这一种情况**才允许它不出现在检查表里：把版本号写进下面这行，
-# 后面用注释写明理由。默认是空的 —— 往里加东西等于给自己开一个口子，加之前先确认清楚，
-# 「暂时没想好查什么」不算理由。
+# 理由写进紧跟着的 MIG_NO_STRUCTURE_WHY。默认是空的 —— 往里加东西等于给自己开一个口子，
+# 加之前先确认清楚，「暂时没想好查什么」不算理由。
 MIG_NO_STRUCTURE_CHECK=''
+# 上面那行真填了版本号，这里就必须写清楚为什么可以不查。两行都会被打印出来给人看（见下）。
+MIG_NO_STRUCTURE_WHY=''
 
 in_list() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# 逃生口一旦真被用上，必须让人一眼看见：那一版从此不进检查表，漏跑了这里也不会拦。
+# 悄悄少查一版比查出问题危险得多 —— 报错还有人看见，「少查了」是安安静静的（MTM-230）。
+# 默认空着时一个字都不打印，别给正常输出添噪音。
+# 注意：这里只负责把话说出来，不改任何一条判定 —— 判定还是上面那两条比对说了算。
+mig_exempt_notice() { # mig_exempt_notice <被豁免的版本列表> <理由>
+  local vers="$1" why="$2"
+  [ -n "$(printf '%s' "$vers" | tr -d '[:space:]')" ] || return 0
+  [ -n "$(printf '%s' "$why"  | tr -d '[:space:]')" ] || why='没写 —— 请在本文件的 MIG_NO_STRUCTURE_WHY 里补上'
+  printf '  ⚠️  以下版本被豁免不查：%s（理由：%s）\n' "$vers" "$why"
+  printf '       豁免 = 这一版没进 verify-release.sh 的检查表，本测试也不会拦。\n'
+  printf '       确认它确实一行结构都没改（只补数据、只建索引），否则请把豁免撤掉、补上检查行。\n'
+}
+mig_exempt_notice "$MIG_NO_STRUCTURE_CHECK" "$MIG_NO_STRUCTURE_WHY"
 
 DIR_VERS=$(mig_dir_versions | tr '\n' ' ')
 TAB_VERS=$(mig_rows | cut -d'|' -f1 | sort -u | tr '\n' ' ')
@@ -402,6 +418,17 @@ while IFS='|' read -r v kind tbl col minw sev msg; do
 done < <(mig_rows)
 if [ -z "$MISS" ]; then printf '  ✅ 表里每一行都进了查询语句\n'
 else F=$((F+1)); printf '  ❌ 这些没进查询语句：%s\n' "$MISS"; fi
+
+# 逃生口（MIG_NO_STRUCTURE_CHECK）被用上时必须有动静，空着时必须一个字都不打印（MTM-230）。
+# 没有这几条，「打印」哪天写坏了也没人知道 —— 而它坏了的表现恰恰是「什么都没打印」，
+# 跟「本来就没人用逃生口」长得一模一样，光看输出根本分不出来。
+O=$(mig_exempt_notice 'V9_8' '只补了一批历史数据，一行结构都没改')
+has   "逃生口被用上：打出了是哪几版"        '被豁免不查：V9_8'                 "$O"
+has   "逃生口被用上：打出了理由"            '理由：只补了一批历史数据'          "$O"
+O=$(mig_exempt_notice 'V9_8' '   ')
+has   "填了版本没写理由：明说理由没写"       'MIG_NO_STRUCTURE_WHY 里补上'      "$O"
+O=$(mig_exempt_notice '' '')
+hasnt "没人用逃生口：不给正常输出添噪音"     '被豁免不查'                       "$O"
 
 echo
 echo "===== 八之五、warn 这一档：眼下一行都没在用，但机制得是活的 ====="

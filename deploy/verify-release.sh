@@ -32,6 +32,11 @@
 #   它只能确认「发上去的是对的版本、系统活着、结构对得上」，
 #   确认不了「这一版新改的功能到底对不对」—— 那个还得人登进去点一遍。
 #   完整说明见 docs/RELEASE_VERIFY.md。
+#
+# ⚠️ 这个脚本目前只能验数据库是 PostgreSQL 的机器。MySQL 的机器上跑不了：第五节生成的查询
+#    用的是 PostgreSQL 专有写法（::text、table_schema='public'），MySQL 上直接语法报错。
+#    好在它不会误报绿 —— 配置里填的是 MySQL 地址，脚本认不出来，第一步就判失败拦住。
+#    看到那条失败，不代表你的配置写错了，是脚本还不支持 MySQL。补 MySQL 支持排在 MTM-234。
 
 set -uo pipefail
 
@@ -262,6 +267,14 @@ MIGRATION_CHECKS='
   V1_3 | column | fp_pay_order          | notify_error  |          | fail | fp_pay_order 缺 notify_error 列 —— 补跑 V1_3，同上
   V1_4 | table  | fp_pending_pay_amount |               |          | fail | 缺 fp_pending_pay_amount 表 —— 补跑 V1_4，漏了那个「两人同价撞单认错人」的赔钱 bug 原样还在
   V1_4 | table  | fp_unmatched_notify   |               |          | fail | 缺 fp_unmatched_notify 表 —— 补跑 V1_4，漏了「钱到了但认不到订单」的记录存不下来，后端会直接报错
+# 下面四行查的是「这一列够不够宽」。眼下这四列是限长的 varchar(2000)，查得到具体宽度。
+# ★ 哪天把这几列改成不限长度的类型（PostgreSQL 的 text、MySQL 的 TEXT），记得回来看一眼 ★
+#   数据库里的「长度上限」那一栏对不限长类型是空的。现在 mig_ok 的 width 分支专门留了
+#   一档 n/a 接住它（见下面那个函数），会当成通过，所以改类型本身不会把发版误拦下来。
+#   要动的是这两处：mig_sql 里那句 COALESCE(...,'n/a')，和 mig_ok 里 width 那一档。
+#   任一处被改掉、n/a 这条路没了，改类型的那天 V1_5 就会被误判成「没生效」，把发版拦住 ——
+#   而字段其实比要求的还宽，人会顺着提示去补跑一个根本不用跑的迁移脚本，方向正好指反。
+#   另外，真改成不限长类型之后，下面这四句「不够宽（要 ≥2000）」的说法也就过期了，一并改掉。
   V1_5 | width  | fp_pay_order          | notify_url    | 2000     | fail | fp_pay_order.notify_url 不够宽（要 ≥2000）—— 补跑 V1_5，漏了长回调地址写不进去，用户看到「支付通道错误」
   V1_5 | width  | fp_pay_order          | return_url    | 2000     | fail | fp_pay_order.return_url 不够宽（要 ≥2000）—— 补跑 V1_5，同上
   V1_5 | width  | fp_merchant           | notify_url    | 2000     | fail | fp_merchant.notify_url 不够宽（要 ≥2000）—— 补跑 V1_5，同上
@@ -311,6 +324,10 @@ mig_ok() { # mig_ok <怎么查> <查回来的值> <最小宽度>
   case "$1" in
     table)  [ "${2:-0}" -ge 1 ] 2>/dev/null ;;
     column) [ -n "$2" ] ;;
+    # width 这一档的 n/a 是给「不限长度的类型」留的门，别顺手删掉：数据库里的长度上限
+    # 那一栏，对 PostgreSQL 的 text 是空的，mig_sql 用 COALESCE 把空换成了 n/a。
+    # 少了这一行，哪天有人把 notify_url / return_url 改成不限长类型，V1_5 会被误判成
+    # 「没生效」而拦下发版 —— 字段明明比要求的还宽，人却被指去补跑迁移脚本，方向指反。
     width)  if   [ -z "$2" ];      then return 1   # 列压根不在
             elif [ "$2" = 'n/a' ]; then return 0   # 不限长度的类型（TEXT 之类），算过
             else [ "$2" -ge "$3" ] 2>/dev/null; fi ;;
