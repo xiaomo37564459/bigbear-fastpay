@@ -87,11 +87,16 @@ fastpay:
   
   # 管理员初始账号：只在数据库里没有任何管理员时用一次（首次部署）
   # - username 可通过 FASTPAY_ADMIN_INITIAL_USERNAME 覆盖，默认 admin
-  # - password 故意不设默认值：不配置就在启动时随机生成一个 16 位密码，明文只写到 warn 日志里一次，
-  #   避免仓库/配置文件里出现任何人尽皆知的默认口令（MTM-149 问题一）
+  # - password 故意不设默认值：不配置就在启动时随机生成一个 16 位密码，写进 initial-password-file
+  #   指定的受限文件（权限 rw-------），日志里只留出口路径、不出现密码本身。避免仓库/配置文件里
+  #   出现任何人尽皆知的默认口令（MTM-149 问题一），以及避免密码流进全局可读的日志文件（MTM-246）
+  # - initial-password-file 默认落在后端工作目录下 fastpay-initial-admin-password.txt；
+  #   生产 systemd WorkingDirectory=/opt/fastpay，所以最终是 /opt/fastpay/fastpay-initial-admin-password.txt。
+  #   想换位置就设 FASTPAY_ADMIN_INITIAL_PASSWORD_FILE=/绝对/路径/xxx.txt
   admin:
     username: ${FASTPAY_ADMIN_INITIAL_USERNAME:admin}
     password: ${FASTPAY_ADMIN_INITIAL_PASSWORD:}
+    initial-password-file: ${FASTPAY_ADMIN_INITIAL_PASSWORD_FILE:fastpay-initial-admin-password.txt}
   
   # 支付配置
   pay:

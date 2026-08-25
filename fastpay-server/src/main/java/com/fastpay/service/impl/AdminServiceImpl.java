@@ -23,10 +23,22 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 管理员服务实现类
@@ -51,11 +63,24 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
 
     /**
      * 初始化管理员密码。
-     * 留空是故意的：生产 yml 里不配这项，InitConfig 会随机生成一个 16 位密码并打到 warn 日志里，
+     * 留空是故意的：生产 yml 里不配这项，initDefaultAdmin() 会随机生成一个 16 位密码并
+     * 写到 initialPasswordFile 指定的受限文件里（权限 0600），日志里只留出口路径，不出现密码本身。
      * 避免仓库/配置文件里出现任何默认密码。dev/测试用的固定密码写在 application-dev.yml 里。
      */
     @Value("${fastpay.admin.password:}")
     private String defaultPassword;
+
+    /**
+     * 首次部署自动生成的初始管理员密码写到哪。
+     * 默认写到 JVM 工作目录下 fastpay-initial-admin-password.txt。生产走 systemd 的
+     * WorkingDirectory=/opt/fastpay，所以最终文件是 /opt/fastpay/fastpay-initial-admin-password.txt，
+     * 权限 rw-------，只有 fastpay 账号（或 root）能读到。
+     *
+     * MTM-246：修复前这里的实现是把明文密码 warn 到日志里，而线上日志默认全局可读，
+     * 相当于把首任管理员账号密码送给了任何能登上机器的人。
+     */
+    @Value("${fastpay.admin.initial-password-file:fastpay-initial-admin-password.txt}")
+    private String initialPasswordFile;
 
     public AdminServiceImpl(JwtUtil jwtUtil, MerchantMapper merchantMapper,
                            ShopMapper shopMapper, PayQrcodeMapper payQrcodeMapper,
@@ -188,11 +213,19 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
         String passwordPlain;
         boolean generated = false;
         if (defaultPassword == null || defaultPassword.isBlank()) {
-            // 没配置初始密码 —— 生产环境走这里：随机生成、日志里印一次给运维
+            // 没配置初始密码 —— 生产环境走这里：随机生成一串，写进受限文件（0600）
             passwordPlain = RandomUtil.randomString("abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789", 16);
             generated = true;
         } else {
             passwordPlain = defaultPassword;
+        }
+
+        // 顺序很关键（MTM-246）：随机分支下先把密码文件落到磁盘，再往库里写管理员记录。
+        // 反过来的话，一旦文件写失败、异常抛出，下次启动库里已经有管理员了、走不进这段，
+        // 运维就永远拿不到密码，只能删记录重建，非常麻烦。
+        Path passwordFile = null;
+        if (generated) {
+            passwordFile = writeInitialPasswordFile(username, passwordPlain);
         }
 
         Admin admin = new Admin();
@@ -205,16 +238,110 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
         this.save(admin);
 
         if (generated) {
-            // 密码只在日志里出现一次，运维拿到之后请立刻登进后台改成自己的口令
+            // MTM-246：日志里绝对不许出现密码明文，只留一条「去哪拿」。
+            // 线上日志文件默认全局可读，一旦密码进日志，任何能登上机器的账号都能翻出来。
             log.warn("========================================================");
-            log.warn("首次启动，已自动创建管理员账号：");
-            log.warn("  账号：{}", username);
-            log.warn("  初始密码：{}", passwordPlain);
-            log.warn("这条日志只在首次启动时出现一次，请立即登录后台修改密码。");
-            log.warn("修改入口：右上角头像 -> 账号设置");
+            log.warn("首次启动，已自动创建管理员账号：{}", username);
+            log.warn("初始密码已写入受限文件（权限 rw-------，只有服务账号能读）：");
+            log.warn("  {}", passwordFile);
+            log.warn("请以服务账号（通常是 fastpay，或 root）读取该文件，登录后台后立即修改密码，");
+            log.warn("修改入口：右上角头像 -> 账号设置。改完之后手动删除该文件：");
+            log.warn("  rm {}", passwordFile);
             log.warn("========================================================");
         } else {
             log.info("已初始化管理员账号: {}", username);
+        }
+    }
+
+    /**
+     * 把首次部署生成的初始管理员密码落到一份 0600 权限的文件里。
+     *
+     * MTM-246：修复前 initDefaultAdmin() 把明文密码 warn 到日志里，而线上日志文件默认全局可读，
+     * 相当于把首任管理员账号密码送给了任何能登上机器的人。这里改成写到只有属主可读写的文件里，
+     * 日志里只留出口路径。首次登录改完密码后运维应手动删掉这份文件（日志里已经贴了 rm 命令）。
+     *
+     * 实现细节：
+     *   · POSIX 文件系统（生产 Linux、CI Linux/Mac）：在 open 时就把权限设成 rw-------，
+     *     避免"先建 644 再 chmod"这段窗口期里被别的进程读到。
+     *   · 非 POSIX 文件系统（Windows 本地开发）：退到 File.setReadable/Writable 做兜底，
+     *     只让当前用户可读写；这个平台不跑生产。
+     *   · 写失败 → 抛 BusinessException，让调用方看到、启动直接失败：
+     *     宁可服务起不来，也不能起来了但没人拿得到初始密码。
+     */
+    private Path writeInitialPasswordFile(String username, String passwordPlain) {
+        Path target = Paths.get(initialPasswordFile).toAbsolutePath().normalize();
+        try {
+            Path parent = target.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            String body = "# 首次部署自动生成的初始管理员账号（MTM-246）\n"
+                    + "# 用这一对登进后台后请立即修改密码，改完手动删除本文件：\n"
+                    + "#   rm " + target + "\n"
+                    + "username=" + username + "\n"
+                    + "password=" + passwordPlain + "\n";
+
+            // 先写到同目录的临时文件再原子移过去，避免读者读到"半份"或旧内容
+            Path tmp = target.resolveSibling(target.getFileName().toString() + ".tmp");
+            Files.deleteIfExists(tmp);
+
+            boolean posix = tryCreatePosixFile(tmp);
+            if (!posix) {
+                Files.createFile(tmp);
+            }
+            Files.writeString(tmp, body, StandardCharsets.UTF_8,
+                    StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+
+            if (!posix) {
+                // Windows 兜底：文件系统不支持 POSIX，靠 File API 收权限
+                java.io.File f = tmp.toFile();
+                //noinspection ResultOfMethodCallIgnored
+                f.setReadable(false, false);
+                //noinspection ResultOfMethodCallIgnored
+                f.setWritable(false, false);
+                //noinspection ResultOfMethodCallIgnored
+                f.setExecutable(false, false);
+                //noinspection ResultOfMethodCallIgnored
+                f.setReadable(true, true);
+                //noinspection ResultOfMethodCallIgnored
+                f.setWritable(true, true);
+            }
+
+            try {
+                Files.move(tmp, target,
+                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException fallback) {
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            // move 之后再核一次权限，防止 REPLACE_EXISTING 时继承了旧文件的权限
+            try {
+                Set<PosixFilePermission> ownerOnly = PosixFilePermissions.fromString("rw-------");
+                Files.setPosixFilePermissions(target, ownerOnly);
+            } catch (UnsupportedOperationException windowsHasNoPosix) {
+                // 与上面 Windows 兜底同理
+            }
+
+            return target;
+        } catch (IOException e) {
+            throw new BusinessException("初始管理员密码文件写入失败：" + target + " —— " + e.getMessage());
+        }
+    }
+
+    /**
+     * 尝试用 POSIX 0600 属性创建文件。返回 false 表示当前文件系统不支持 POSIX（Windows）。
+     */
+    private boolean tryCreatePosixFile(Path path) throws IOException {
+        try {
+            Set<PosixFilePermission> ownerOnly = PosixFilePermissions.fromString("rw-------");
+            FileAttribute<Set<PosixFilePermission>> attr = PosixFilePermissions.asFileAttribute(ownerOnly);
+            Files.createFile(path, attr);
+            return true;
+        } catch (UnsupportedOperationException windowsHasNoPosix) {
+            return false;
+        } catch (FileAlreadyExistsException e) {
+            // 上一步 deleteIfExists 之后又有别的进程建了同名文件（极端情况），当作 POSIX 失败往下走
+            return false;
         }
     }
 

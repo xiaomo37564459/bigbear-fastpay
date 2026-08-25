@@ -674,17 +674,26 @@ nginx: [emerg] unknown "connection_upgrade" variable
 2. **`fastpay-merchant` 依赖 `less`。**
    支付页和支付结果页用了 `lang="less"` 的样式，`package.json` 里必须保留 `less` 这个 devDependency，否则 `npm run build` 直接失败。
 
-3. **首次部署时，管理员账号密码从哪来。**（`v1.2.0` 起，公开仓库里不再有默认的 `admin/123456`）
+3. **首次部署时，管理员账号密码从哪来。**（`v1.2.0` 起公开仓库里不再有默认的 `admin/123456`；`MTM-246` 起密码不再进日志）
    - 生产 yml 里只配了 `FASTPAY_ADMIN_INITIAL_USERNAME`（默认 `admin`），**故意不设 `FASTPAY_ADMIN_INITIAL_PASSWORD`**。
-   - 首次启动、库里没有任何管理员时，`InitConfig` 会随机生成一个 16 位密码，明文只写到 warn 日志里一次，形如：
+   - 首次启动、库里没有任何管理员时，`InitConfig` 会随机生成一个 16 位密码，**写进后端进程工作目录下的一份受限文件**（权限 `rw-------`，只有服务账号能读）：
      ```
-     WARN c.fastpay.service.impl.AdminServiceImpl - ==========================...
-     WARN c.fastpay.service.impl.AdminServiceImpl - 首次启动，已自动创建管理员账号：
-     WARN c.fastpay.service.impl.AdminServiceImpl -   账号：admin
-     WARN c.fastpay.service.impl.AdminServiceImpl -   初始密码：xxxxxxxxxxxxxxxx
+     /opt/fastpay/fastpay-initial-admin-password.txt
      ```
-     运维在 `journalctl -u fastpay-server | grep '初始密码'` 里拿到之后，**立刻登进后台改成自己的密码**，之后就再也拿不到了。
-   - 如果需求方偏要指定一个初始密码（例如迁移场景），在 `/etc/fastpay/fastpay-server.env` 里加一行 `FASTPAY_ADMIN_INITIAL_PASSWORD=<你想要的密码>`，然后首次启动。用完这一次记得**立刻删掉这一行**（不然下次重装库时又会被人在 env 文件里看到）。
+     日志里只会 warn 出该文件的绝对路径，**不会再出现密码明文**（`MTM-246` 修复项：线上日志文件默认全局可读，把密码写进日志等于把首任管理员账号送人）。
+   - 拿密码：SSH 到服务器后，用服务账号或 root 读一次即可，例如：
+     ```bash
+     sudo cat /opt/fastpay/fastpay-initial-admin-password.txt
+     # 或
+     sudo -u fastpay cat /opt/fastpay/fastpay-initial-admin-password.txt
+     ```
+     文件里同时有 `username=` 和 `password=` 两行，直接拿去登录后台。
+   - **登进后台第一件事：改成自己的密码；改完手动删掉那份文件**，防止有人日后翻磁盘再拿一次：
+     ```bash
+     sudo rm /opt/fastpay/fastpay-initial-admin-password.txt
+     ```
+   - 想换个位置放这份文件：在 `/etc/fastpay/fastpay-server.env` 里加一行 `FASTPAY_ADMIN_INITIAL_PASSWORD_FILE=/绝对/路径/xxx.txt`（默认相对 systemd `WorkingDirectory`，也就是 `/opt/fastpay/`）。
+   - 如果需求方偏要指定一个初始密码（例如迁移场景），在 `/etc/fastpay/fastpay-server.env` 里加一行 `FASTPAY_ADMIN_INITIAL_PASSWORD=<你想要的密码>`，然后首次启动。走这条路时**不会**再生成上面那份文件；用完这一次记得**立刻删掉这一行**（不然下次重装库时又会被人在 env 文件里看到）。
    - `application-prod.yml` 里的 JWT 密钥同样没有默认值，必须由环境变量注入；`application-dev.yml` 里那个开发用的默认密钥仍然是公开的，本地开发无所谓，但**不要拿 dev 配置上生产**。
    - **拿到之后放哪、上线验证该用哪个账号登后台**，见 [敏感信息怎么处理](SECRETS.md) 第四、五节。**别用需求方本人的账号去做验收。**
 
