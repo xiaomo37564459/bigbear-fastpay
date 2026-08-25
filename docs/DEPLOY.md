@@ -309,6 +309,9 @@ ssh root@150.158.99.251 '
     -f /root/fastpay-backups/fastpay-${TS}-before-${VER}.dump
   cp -a /opt/fastpay/fastpay-server-1.0.0.jar /root/fastpay-backups/fastpay-server-1.0.0.jar.pre-${VER}-${TS}
   tar -czf /root/fastpay-backups/www-pre-${VER}-${TS}.tar.gz -C /opt/fastpay/www .
+  # ⚠️ 这一行不能省，原因见下面那条说明
+  chmod 600 /root/fastpay-backups/fastpay-${TS}-before-${VER}.dump \
+            /root/fastpay-backups/www-pre-${VER}-${TS}.tar.gz
   # 备份完先验一下能读，别等到要回退时才发现是坏的（应打印出表的张数）
   pg_restore -l /root/fastpay-backups/fastpay-${TS}-before-${VER}.dump | grep -c "TABLE DATA"
 '
@@ -387,6 +390,22 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 # 7. 放完锁之后再慢慢做：登进后台按 docs/RELEASE_VERIFY.md 第二步点一遍、截图、写验收报告。
 #    这几件事都不用占着机器。
 ```
+
+> 🔴 **备份文件必须是 `600`（只有 root 读得到），上面那句 `chmod 600` 不许省。**
+> `pg_dump` 和 `tar` 建出来的文件跟着系统默认权限走，在这台机器上是 `644` —— **这台机器上任何一个账号都能把整个库备份拷走**。
+> 那份 dump 里有商户 API 密钥、密码哈希、全部订单数据，等于一次性全漏。
+> 这台机器上还跑着 Multica 平台自己和另外两个站点，不是只有本项目的人能登。
+>
+> **这不是假设，已经连着两次踩到了**：2026-08-25 发 v1.8.0 后端（MTM-239）那次，
+> 备份建出来是 `644`，后来专门补占了一次锁去 `chmod 600`；
+> 同一天发 v1.8.0 前端（MTM-258）照着同一段命令又跑了一遍，又是 `644`，又补了一次。
+> **两次都是人事后想起来才补的 —— 靠记性就是靠运气**，所以直接写进命令里。
+>
+> 收工前顺手扫一遍，确认没有漏网的（正常输出是空的）：
+>
+> ```bash
+> find /root/fastpay-backups -type f \( -name '*.dump' -o -name 'www-*.tar.gz' \) -perm /o+r
+> ```
 
 > 💡 **忘了跑 `v1.2.0` 那个 `V1_1` 会怎样？**
 > 从 `v1.2.0` 起，后端启动时会自检 `fp_admin` 表结构。如果发现缺 `token_version` 列，会**直接启动失败**并在日志里指名要跑哪个脚本。宁可服务不起来（`systemctl status` 立刻报红，运维当场就知道），也不要服务起来了但一登录就 500 —— 后者要等真实用户来投诉才能发现。
