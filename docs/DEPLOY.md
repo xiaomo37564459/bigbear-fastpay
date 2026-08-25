@@ -411,17 +411,20 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 | `v1.5.0` | **无** | 这一版是 CI 流程、文档和 `.gitignore` 改动，不动表结构（可部署产物与 `v1.4.0` 完全一致，当时未重新部署） |
 | `v1.5.1` | `V1_4__pay_amount_uniqueness_pg.sql` | 两人同价撞单认错人（MTM-170）：新建 `fp_pending_pay_amount`、`fp_unmatched_notify` 两张表，补齐老订单的 `pay_amount`。🔴 **这个脚本会改动已有订单数据**，跑之前务必先做完整库备份 |
 | `v1.6.0` | `V1_3__order_notify_result_pg.sql` | 订单回调结果落库（MTM-157）：`fp_pay_order` 新增 `notify_result`、`notify_error` 两列 |
+| `v1.8.0` | **无** | 关掉生产 MyBatis 明文 SQL 日志（MTM-239），外加易支付错误提示、商户密码不回显、下单 `expireTime` 改 ISO-8601 等后端小改动，都不动表结构 |
 | `v1.7.0` | `V1_5__widen_url_columns_pg.sql` | 订单/商户 URL 列 255→2000 加宽（MTM-209）。生产上这四个字段**已经是 2000 了**（2026-08-19 MTM-151 那晚用应急脚本 `widen-url-cols.sql` 手工加宽过），所以在生产上跑它是空操作，只是把手工那一步固化进正式脚本。但**只要有非生产环境（老 dev/test 库、灾备快照）曾经从旧 init 建起来又没跟着手工加宽，`V1_5` 就必须跑**，否则一走 sub2api 那类带长 URL 的支付流程就会报 `value too long for type character varying(255)` |
 
-> ⚠️ **线上现在是「前端 `v1.7.0` + 后端 `v1.6.0`」的半版状态，别当成整版 `v1.7.0`。**
-> 2026-08-24 上线 MTM-202 时只发了两个前端（`fastpay-admin` / `fastpay-merchant`，从 tag `v1.7.0`
-> 也就是提交 `e5e3387` 构建），**后端 jar 和数据库一个字都没动**。所以：
+> ⚠️ **线上现在是「前端 `v1.7.0` + 后端 `v1.8.0`」，别当成整版 `v1.8.0`。**
+> 2026-08-25 11:02 发 MTM-239 时**只换了后端 jar**（从 tag `v1.8.0`、也就是提交 `44cc288` 构建），
+> 前端和数据库一个字都没动。所以：
 >
-> - `/opt/fastpay/DEPLOYED_VERSION` 第一行写的是 `v1.7.0-frontend-only`，**不是** `v1.7.0` —— 这是故意的，
+> - `/opt/fastpay/DEPLOYED_VERSION` 第一行写的是 `v1.8.0-backend-only`，**不是** `v1.8.0` —— 这是故意的，
 >   跑验证脚本时版本号也要照着传这一串。文件里第 2 行起写清了前端/后端/数据库各自停在哪一版
-> - `v1.7.0` 里那批后端改动（MTM-187 时区、MTM-177 CORS 白名单、MTM-209 的 `V1_5`、MTM-212 的 `/mapi.php`）
->   **还没上线**，要等下一个发布窗口
-> - 等后端也发上去之后，把 `DEPLOYED_VERSION` 第一行改回 `v1.7.0`，并把这一段改成正常表述
+> - `v1.8.0` 里那批**前端**改动（MTM-240 商户中心移动端适配）**还没上线**，要等下一个前端发布窗口
+> - 等前端也发上去之后，把 `DEPLOYED_VERSION` 第一行改回 `v1.8.0`，并把这一段改成正常表述
+>
+> 📌 **上一轮的半版状态已经收口了**：2026-08-24 17:07 发 MTM-236 时后端补到了 `v1.7.0`，
+> 前端/后端/数据库当时三者齐平。这次是新开的一轮「只发后端」，性质和上次的「只发前端」一样。
 >
 > ✅ **数据库那边：`V1_1`~`V1_4` 都已经跑过了。**（2026-08-20 实测核对：库里 `fp_pending_pay_amount`、
 > `fp_unmatched_notify` 两张表在，`fp_pay_order` 的 `notify_result`、`notify_error`
@@ -635,8 +638,12 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 > 📌 **每次发版都要在服务器上留一份「这一版怎么退」的文档**，放 `/root/fastpay-ops/ROLLBACK-<版本号>.md`，
 > 写清楚：退回哪一版、备份文件在哪、数据库要不要跟着退、什么情况下就该退。
 > **发新版本时，上一版那份要标成「已过期」**，别让出事的人抓起一份过期的回退文档照着做。
-> 当前有效的那份是 `/root/fastpay-ops/ROLLBACK-v1.7.0-frontend-only.md`（2026-08-24 只发了前端那次，MTM-202）。
-> `ROLLBACK-v1.6.0.md` 和 `ROLLBACK-v1.5.1.md` 都已在文件开头标成「已过期」。
+> 当前有效的那份是 `/root/fastpay-ops/ROLLBACK-v1.8.0-backend-only.md`（2026-08-25 只发了后端那次，MTM-239）。
+> `ROLLBACK-v1.7.0.md`、`ROLLBACK-v1.7.0-frontend-only.md`、`ROLLBACK-v1.6.0.md`、`ROLLBACK-v1.5.1.md`
+> 都已在文件开头标成「已过期」。
+>
+> ⚠️ 这一份的回退说明里专门写了一条**别人容易忽略的代价**：退回 `v1.7.0` 会把「日志明文打印商户密钥」
+> 那个洞重新打开（MTM-239 修的就是它）。真要退，看一眼那份文档里「退回去会把哪个问题带回来」那一节。
 
 > ⚠️ **回退时数据库要不要一起退回去？不用，也不要退。**
 > 迁移脚本（比如 `v1.2.0` 带的 `V1_1__admin_account_management_pg.sql`）加的列，**旧版本 jar 完全不受影响**，留着就行。
