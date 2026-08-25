@@ -489,7 +489,11 @@ elif [ -n "$LOCK_TOKEN" ]; then
   if [ -z "$LOCK_TOK" ]; then
     no "你说你这次是拿着 $LOCK_TOKEN 这把锁在动生产，但机器上根本没有人占锁 —— 要么你压根没上锁就动了，要么锁被别人放掉了。两种情况都得先弄清楚，见 docs/DEPLOY.md 第零节"
   elif [ "$LOCK_TOK" = "$LOCK_TOKEN" ]; then
-    ok "这台机器现在只有你在动（锁在 $LOCK_TOK / $LOCK_WHO 手上）。验完记得放开：$OPS_DIR/prod-lock.sh release $LOCK_TOKEN"
+    # 这句话的口径跟 docs/DEPLOY.md 第零节「什么时候放锁」是一套的：锁只保护「机器正在被换」
+    # 那一小段，这个脚本是最后一件要占着机器做的事。跑完就放，别占着做后面的人工验证。
+    # （原来这里写的是「验完记得放开」，跟新规矩正好相反 —— 人照着文档做，脚本却说反话，
+    #   规矩会被脚本自己拆台。MTM-247）
+    ok "这台机器现在只有你在动（锁在 $LOCK_TOK / $LOCK_WHO 手上）。这条脚本跑完机器就不用再动了，立刻放开：$OPS_DIR/prod-lock.sh release $LOCK_TOKEN —— 后面登进后台点一遍、截图、写报告都不用占着机器；万一要回退，重新占一次锁就行（见 docs/DEPLOY.md 第零节「什么时候放锁」）"
   else
     no "有别人正在动这台机器！锁在 $LOCK_TOK（$LOCK_WHO）手上，不是你的 $LOCK_TOKEN。两路人同时动同一台生产服务器 = 上面这些检查结果都不可信，立刻停手，去 $LOCK_TOK 那条 issue 下面对一下"
   fi
