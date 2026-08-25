@@ -270,6 +270,7 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
      */
     private Path writeInitialPasswordFile(String username, String passwordPlain) {
         Path target = Paths.get(initialPasswordFile).toAbsolutePath().normalize();
+        Path tmp = null;
         try {
             Path parent = target.getParent();
             if (parent != null) {
@@ -282,7 +283,7 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
                     + "password=" + passwordPlain + "\n";
 
             // 先写到同目录的临时文件再原子移过去，避免读者读到"半份"或旧内容
-            Path tmp = target.resolveSibling(target.getFileName().toString() + ".tmp");
+            tmp = target.resolveSibling(target.getFileName().toString() + ".tmp");
             Files.deleteIfExists(tmp);
 
             boolean posix = tryCreatePosixFile(tmp);
@@ -313,6 +314,8 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
             } catch (java.nio.file.AtomicMoveNotSupportedException fallback) {
                 Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
             }
+            // move 成功之后 tmp 已经不存在，finally 里就不用再去删
+            tmp = null;
 
             // move 之后再核一次权限，防止 REPLACE_EXISTING 时继承了旧文件的权限
             try {
@@ -325,6 +328,15 @@ public class AdminServiceImpl extends ServiceImpl<AdminMapper, Admin> implements
             return target;
         } catch (IOException e) {
             throw new BusinessException("初始管理员密码文件写入失败：" + target + " —— " + e.getMessage());
+        } finally {
+            // 任何一步失败都把留下的 .tmp 中间产物清掉，别在磁盘上累计
+            if (tmp != null) {
+                try {
+                    Files.deleteIfExists(tmp);
+                } catch (IOException ignored) {
+                    // 清不掉就算了，别再抛第二次异常盖掉原始失败原因
+                }
+            }
         }
     }
 
