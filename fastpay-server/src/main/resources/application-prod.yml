@@ -49,7 +49,10 @@ mybatis-plus:
       logic-not-delete-value: 0
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # 生产环境不能开 StdOutImpl：它会把每一条 SQL 和查询结果的整行数据打到 stdout，
+    # 里面包含商户 API 密钥、登录密码密文等敏感字段（MTM-239）。
+    # 若要临时排查线上问题，用环境变量 MYBATIS_PLUS_CONFIGURATION_LOG_IMPL 覆盖，用完立刻取消。
+    # 开发环境的开关保留在 application-dev.yml，本地调试不受影响。
 
 # Knife4j API 文档配置
 # 生产环境默认关闭：接口本身有登录保护，但把 67 个接口的完整清单公开出去，
