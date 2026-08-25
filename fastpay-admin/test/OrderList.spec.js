@@ -80,13 +80,16 @@ const bigAmountOrder = {
 const orders = [paidOrder, unpaidOrder, bigAmountOrder]
 
 /**
- * 挂载一次页面，并且一直等到三行订单真的渲染出来为止。
+ * 挂载一次页面，并且一直等到指定行数的订单真的渲染出来为止。
  *
  * 这里等的是「条件成立」而不是「等固定一拍」：原来的写法是 mount 完 await 一次
  * flushPromises 就直接断言，机器忙的时候那一拍不够，断言就扑空。现在改成反复检查
- * 「表格里有没有三行」，慢就多查几轮，快就立刻返回，结果不再取决于机器当时的手速。
+ * 「表格里够不够行数」，慢就多查几轮，快就立刻返回，结果不再取决于机器当时的手速。
+ *
+ * expectedRows 默认是默认那批假数据的三行；用例自己换了假数据的（比如只放一条），
+ * 必须把真实条数传进来 —— 否则这里会一直等一个永远等不到的行数，白白耗到超时。
  */
-async function mountAndWaitForRows() {
+async function mountAndWaitForRows(expectedRows = orders.length) {
   const wrapper = mount(OrderList, {
     global: {
       stubs: { Search: true, Refresh: true }
@@ -96,7 +99,7 @@ async function mountAndWaitForRows() {
   await vi.waitUntil(
     async () => {
       await flushPromises()
-      return wrapper.findAll('.el-table__row').length === orders.length
+      return wrapper.findAll('.el-table__row').length === expectedRows
     },
     { timeout: 20000, interval: 20 }
   )
@@ -317,20 +320,23 @@ describe('订单列表 - 回调状态副行不许折行', () => {
     getOrderPage.mockResolvedValue({
       data: { records: [1, 12, 999].map(withNotifyCount), total: 3 }
     })
-    const wrapper = mountList()
-    await flushPromises()
+    const wrapper = await mountAndWaitForRows(3)
 
     const lines = wrapper.findAll('.notify-count').map((node) => node.text())
     expect(lines).toEqual(['通知1次', '通知12次', '通知999次'])
     expect(lines.join(' ')).not.toContain('已通知')
+
+    wrapper.unmount()
   })
 
   it('没通知过的订单还是不显示这一行，别凭空冒出个「通知0次」', async () => {
     getOrderPage.mockResolvedValue({ data: { records: [unpaidOrder], total: 1 } })
-    const wrapper = mountList()
-    await flushPromises()
+    // 这条只放一条假数据，行数是 1 不是默认的 3，必须显式传进去
+    const wrapper = await mountAndWaitForRows(1)
 
     expect(wrapper.findAll('.notify-count')).toHaveLength(0)
+
+    wrapper.unmount()
   })
 
   it('回调状态列放得下三位数的副行 —— 这就是"不折行"的硬约束', () => {
