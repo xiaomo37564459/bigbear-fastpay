@@ -1,5 +1,6 @@
 package com.fastpay.config;
 
+import com.fastpay.common.BusinessException;
 import com.fastpay.service.AdminService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -36,8 +37,24 @@ public class InitConfig implements CommandLineRunner {
         ensureAdminSchemaUpgraded();
 
         // 初始化默认管理员账号（首次启动才建；已存在就跳过）
+        //
+        // 这里对异常做分档：
+        //   · BusinessException：明确是「首次部署时初始密码文件写不出去」这类结构性问题
+        //     （见 AdminServiceImpl.writeInitialPasswordFile）。库里没管理员 + 密码文件缺席
+        //     = 后台没人能登进去，服务就算起来了也是空壳。让 Spring 直接起不来 (MTM-246)
+        //     ，运维在启动阶段就能看到明确原因，不会被下面那句「可能数据库未就绪」误导去查库。
+        //   · 其它 Exception：绝大多数就是数据库连不上/未就绪那类，跟老行为一致地降级成 WARN
+        //     即可 —— 库真正就绪后重启，initDefaultAdmin() 会重新跑一次。
         try {
             adminService.initDefaultAdmin();
+        } catch (BusinessException e) {
+            throw new IllegalStateException(
+                    "初始管理员账号未能创建：" + e.getMessage()
+                            + "\n后果：fp_admin 表里没有任何管理员，谁都登不进后台。"
+                            + "\n修法：修复上面提到的文件路径写权限（或用环境变量 "
+                            + "FASTPAY_ADMIN_INITIAL_PASSWORD_FILE=/绝对/路径 换个位置），然后重启后端。"
+                            + "\n详见 docs/DEPLOY.md 第八节第 3 条。",
+                    e);
         } catch (Exception e) {
             log.warn("初始化管理员账号失败（可能数据库未就绪）: {}", e.getMessage());
         }

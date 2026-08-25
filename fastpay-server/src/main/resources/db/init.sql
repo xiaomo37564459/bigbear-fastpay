@@ -257,8 +257,11 @@ CREATE TABLE `fp_login_attempt` (
 --   1. 如果 fp_admin 表里已经有账号，什么都不做；
 --   2. 表为空时：
 --      · fastpay.admin.username / fastpay.admin.password 都显式配了 → 用这一对；
---      · 只配了用户名、没配密码（例如生产环境）→ 随机生成 16 位密码，明文打到 warn 日志里，
---        运维在 systemd/journalctl 里拿一次、立刻登进后台改成自己的密码，然后就不能再拿到了。
+--      · 只配了用户名、没配密码（例如生产环境）→ 随机生成 16 位密码，写进 initial-password-file
+--        指定的受限文件（权限 rw-------，只有服务账号可读），日志里只留出口路径、不出现密码本身
+--        （MTM-246：修复前是打到 warn 日志里，但线上日志文件默认全局可读，等于把首任管理员账号送人）。
+--        运维用 `sudo cat /opt/fastpay/fastpay-initial-admin-password.txt` 拿密码，登录后台后立即改密码，
+--        然后 `sudo rm` 掉那份文件。
 -- dev/测试用的默认凭证放在 application-dev.yml 里，不进这里。
 
 -- =====================================================

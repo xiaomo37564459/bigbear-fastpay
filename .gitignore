@@ -35,6 +35,10 @@ vite.config.js.timestamp-*
 # 数据库连接信息，不能进仓库
 PG.txt
 
+# 首次部署生成的初始管理员密码文件（MTM-246），可能在本地跑 prod profile 时冒出来，绝不能进仓库
+# 带 * 是为了顺带挡住写盘期间的中间产物 fastpay-initial-admin-password.txt.tmp
+fastpay-initial-admin-password.txt*
+
 # 操作系统生成的文件
 .DS_Store
 Thumbs.db

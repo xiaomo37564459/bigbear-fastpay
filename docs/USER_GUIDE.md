@@ -42,7 +42,7 @@ source fastpay-server/src/main/resources/db/init.sql
 - `application-dev.yml` —— **本地开发用这份**。数据库、JWT、支付页面域名都写好了本地能直接用的默认值，一行不改也能起来。
 - `application-prod.yml` —— **生产部署用**。里面所有值都要靠环境变量注入，仓库里不留任何真实连接信息；漏配就直接启动失败，避免默认密码上线。
 
-**本地开发就编辑 `fastpay-server/src/main/resources/application-dev.yml`。**里面所有值都写成 `${环境变量名:默认值}` 的形式：改冒号后面的默认值本地立刻生效，上生产走环境变量覆盖，两条路互不打架。
+**本地开发就编辑 `fastpay-server/src/main/resources/application-dev.yml`。**里面**要跟着环境切换的项**（数据库地址、账号密码、JWT 密钥、支付页面域名、CORS 白名单等）都写成 `${环境变量名:默认值}` 的形式：改冒号后面的默认值本地立刻生效，上生产走环境变量覆盖，两条路互不打架。**固定不变的普通值**（端口 `7001`、令牌有效期、管理员初始账号密码、订单超时时间等）就直接写死，不套壳。
 
 ```yaml
 server:
@@ -323,7 +323,12 @@ npm run dev
 | 签名验不过、回调收不到怎么排查 | [第十一章](API.md#十一出问题了怎么查) |
 | WebSocket 实时推送怎么接 | [3.7](API.md#37-websocket-实时推送) |
 
-服务启动后还可以看在线接口文档：`https://你的域名/fastpay-server/doc.html`
+在线接口文档 `/fastpay-server/doc.html` **只有本地开发环境能打开**（默认 `http://localhost:7001/fastpay-server/doc.html`，后端所有网址都挂在 `/fastpay-server` 前缀下，别漏了）。**线上默认是关掉的，而且是故意关的** —— 把 67 个接口的完整清单公开出去，等于把系统地图直接送给攻击者。所以线上环境有两道锁：
+
+- 后端 `application-prod.yml` 里 `springdoc.api-docs.enabled` 和 `knife4j.enable` 默认都关着；
+- 部署用的 Nginx（`deploy/nginx/pay.copliot.conf`）再挡一层，`/fastpay-server/doc.html` 这类路径直接返回 404。
+
+真要临时排查接口，得两处一起放开：把环境变量 `SPRINGDOC_API_DOCS_ENABLED=true` 设上重启后端，再让运维在 Nginx 那条 `location ~ ^/fastpay-server/(...doc\.html...)` 规则上临时放行；用完记得关回去。
 
 ---
 
@@ -411,54 +416,55 @@ npm run build
 
 ### 6.3 Nginx 配置
 
+下面这份示例照着改一下域名和目录就能跑。三个关键点先说清楚，这几处任何一项跟真实服务对不上，都会直接 502 或 404：
+
+- **后端跑在 `/fastpay-server` 这个前缀下、`7001` 端口上。** 前缀是 `application-*.yml` 里 `server.servlet.context-path` 的值，端口是同一份配置里 `server.port` 的值。所以后端 `location` 必须写 `/fastpay-server/`，`proxy_pass` 目标是 `http://127.0.0.1:7001`（不要在 URL 后再拼路径，让 Nginx 把整段请求路径原样透传给后端）—— 少一层、多一层，backend 就命不中 controller。
+- **前端打包基址是 `/fastpay-admin/` 和 `/fastpay-merchant/`**（见两个 `vite.config.js` 里的 `base`）。两个前端不能挂在根路径 `/` 下，得挂到跟 `base` 同名的子路径下，`index.html` 里对静态资源的引用才对得上。把 `fastpay-admin/dist/*` 原样拷到 `/var/www/fastpay-admin/`，把 `fastpay-merchant/dist/*` 原样拷到 `/var/www/fastpay-merchant/` —— 目录名要跟前端的 `base` 一样，不要多套一层 `dist/`。
+- **WebSocket 走同一个前缀同一个端口**（后端 `@ServerEndpoint("/ws/pay/...")` 挂在 `/fastpay-server` context-path 下）。所以下面一个 `location /fastpay-server/` 就够了，`Upgrade` / `Connection` 两行放里面既覆盖普通 HTTP 也覆盖 WS，不用单独再配一段。
+
 ```nginx
 server {
     listen 80;
     server_name pay.your-domain.com;
 
-    # 后端 API
-    location /api {
-        proxy_pass http://127.0.0.1:9090;
+    client_max_body_size 20m;   # 收款码是 base64 存的，请求体会比较大
+
+    # 后端 API + WebSocket -> fastpay-server (127.0.0.1:7001)
+    location /fastpay-server/ {
+        proxy_pass http://127.0.0.1:7001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-
-    # WebSocket
-    location /ws {
-        proxy_pass http://127.0.0.1:9090;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
         proxy_read_timeout 3600s;
     }
 
-    # 商户平台前端
-    location / {
-        root /var/www/fastpay-merchant/dist;
-        try_files $uri $uri/ /index.html;
-    }
-}
+    # 前端静态文件根目录（下面两个 location 都从这里往下找）
+    root /var/www;
 
-server {
-    listen 80;
-    server_name admin.your-domain.com;
-
-    # 后端 API
-    location /api {
-        proxy_pass http://127.0.0.1:9090;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+    # 管理后台（单页应用，刷新不能 404）
+    location /fastpay-admin/ {
+        try_files $uri $uri/ /fastpay-admin/index.html;
     }
+    location = /fastpay-admin { return 301 /fastpay-admin/; }
 
-    # 管理后台前端
-    location / {
-        root /var/www/fastpay-admin/dist;
-        try_files $uri $uri/ /index.html;
+    # 商户平台（单页应用，刷新不能 404）
+    location /fastpay-merchant/ {
+        try_files $uri $uri/ /fastpay-merchant/index.html;
     }
+    location = /fastpay-merchant { return 301 /fastpay-merchant/; }
+
+    # 根路径默认进商户平台
+    location = / { return 301 /fastpay-merchant/; }
 }
 ```
+
+改完先 `nginx -t` 检查语法，通过了再 `systemctl reload nginx`。
+
+> 生产上真跑的完整版（HTTPS 证书、接口文档挡一层 404、静态资源长缓存等）就在仓库里：[`deploy/nginx/pay.copliot.conf`](../deploy/nginx/pay.copliot.conf) —— 上线时优先照抄这份。
 
 ### 6.4 启动服务
 

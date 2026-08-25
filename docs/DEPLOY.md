@@ -87,53 +87,18 @@ ssh root@150.158.99.251 \
 
 锁不在你手上，这一句会直接让整段命令停住，不会继续往下改机器。
 
-**第三步，机器不用再动了就立刻放开。**
+**第三步，干完了一定要放开**（连验证一起做完再放，别验之前就放）：
 
 ```bash
 ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 ```
-
-「不用再动了」到底截止到哪一步、后面哪些事不用占着机器，见下面「什么时候放锁」那一小节。
-**这条最容易做错，动手前务必看一眼。**
-
-### 什么时候放锁 —— 改完就放，别占着做验证
-
-**这把锁保护的是「机器上的东西正在被换」那一小段时间，不是保护整场发版流程。**
-
-一次发版真正在动机器的部分通常只有几分钟：传 jar、传前端、跑数据库迁移、重启后端、写版本标记，
-再加上紧跟着那一条只读的验证脚本（第三节第 5 步）—— 它要核对的就是你刚换上去的那一版，
-中间不能有别人插进来把东西换掉，所以它算在锁里面。
-
-**那条脚本跑完，机器就不用再动了，立刻放锁。** 从这儿往后的事情，一件都不需要占着机器：
-
-| 这些事要占锁 | 这些事不要占锁 |
-| --- | --- |
-| 传 jar、传前端、跑数据库迁移 | 登进后台按 [发完版怎么确认真的发好了](RELEASE_VERIFY.md) 第二步点一遍 |
-| 重启后端、改服务器上的任何配置 | 截图、贴日志、写验收报告 |
-| 写 `/opt/fastpay/DEPLOYED_VERSION` | 在 issue 里回话、等别人回话、等人拍板 |
-| 回退（换回旧 jar、旧前端） | `curl` 看页面通不通、`systemctl status` 看一眼状态 |
-| 第三节第 5 步那条验证脚本 | 收尾、清理本地文件、下班前的杂事 |
-
-**为什么专门写这一条**：2026-08-24 发 v1.7.0 那次（MTM-202），**真正动机器只花了 3 分钟，
-锁却被占了 176 分钟** —— 中间将近三个小时，别人想动这台机器只能干等着。
-那三个小时里做的是点页面、截图、写报告，一件都不需要占着机器。
-不是谁做错了：当时文档只写了「收工后要放锁」，照着做就一定会变成这样。
-
-**万一验证时发现有问题，要回退、要再动一次机器怎么办？重新占一次锁就行。**
-占锁是一条命令、一秒钟的事。为了这个「万一」一直占着不放，等于拿别人的三个小时，
-去换自己少敲一条命令 —— 这笔账怎么算都不划算。
-
-> ⏱ **占着锁的时候心里有个数：超过 30 分钟还没放，就停下来问自己一句 ——
-> 我这会儿在做的事，真的需要占着这台机器吗？**
-> 十有八九答案是「不需要」。那就先放了，真需要的时候再占一次。
 
 ### 配套的一件事：在 issue 里说一声
 
 锁是给机器看的，issue 是给人看的，**两个都要做**：
 
 - **开工前**在对应 issue 里发一条：「我现在开始动生产服务器了，做 XXX，预计 30 分钟」
-- **放锁后马上**再发一条：「机器我不动了，锁已经放开」——
-  这条别拖到验证做完、报告写完才发，**别人等的是机器，不是你的报告**
+- **收工后**再发一条：「我动完了，锁已经放开」
 
 为什么两个都要：锁只告诉你「现在有人在动」，issue 才说得清「他在动什么、要不要等、能不能一起发」。
 上面那次撞车，两路人各自都以为自己是唯一在动的人 —— 谁都没在 issue 里说一句。
@@ -172,7 +137,7 @@ ssh root@150.158.99.251 'chmod 755 /root/fastpay-ops/prod-lock.sh && /root/fastp
 ### 说清楚这把锁拦得住什么、拦不住什么
 
 **拦得住**：顺手就上。占锁是原子的，两个人同时占必然只有一个成功；谁在动、动多久，一条命令看得见；
-每一次占/放/抢都写进流水，事后一定查得到是谁；发版验证脚本（第三节第 5 步）会把「有别人正在动」直接判成失败。
+每一次占/放/抢都写进流水，事后一定查得到是谁；发版验证脚本（第三节第 6 步）会把「有别人正在动」直接判成失败。
 
 **拦不住**：铁了心要绕。所有人都是用 `root` 登这台机器的，root 想跳过这个脚本随时能跳。
 
@@ -229,24 +194,15 @@ SPRING_PROFILES_ACTIVE=prod
 SERVER_ADDRESS=127.0.0.1
 SERVER_PORT=7001
 DB_DRIVER=org.postgresql.Driver
-DB_URL="jdbc:postgresql://<数据库地址>:<端口>/fastpay"
-DB_USERNAME="<用户名>"
-DB_PASSWORD='<密码>'
-FASTPAY_JWT_SECRET="<一串足够长的随机字符串，用 openssl rand -hex 48 生成>"
-FASTPAY_PAGE_DOMAIN="https://pay.copliot.cloud/fastpay-merchant"
-FASTPAY_NOTIFY_CALLBACK_URL="https://pay.copliot.cloud/fastpay-server/api/notify/callback"
+DB_URL=jdbc:postgresql://<数据库地址>:<端口>/fastpay
+DB_USERNAME=<用户名>
+DB_PASSWORD=<密码>
+FASTPAY_JWT_SECRET=<一串足够长的随机字符串，用 openssl rand -hex 48 生成>
+FASTPAY_PAGE_DOMAIN=https://pay.copliot.cloud/fastpay-merchant
+FASTPAY_NOTIFY_CALLBACK_URL=https://pay.copliot.cloud/fastpay-server/api/notify/callback
 SPRINGDOC_API_DOCS_ENABLED=false
 SPRINGDOC_SWAGGER_UI_ENABLED=false
 ```
-
-> ⚠️ **值上的引号别省。** 这个文件不只被 systemd 读，下面第三节那些备份/迁移命令还会用
-> `set -a; . /etc/fastpay/fastpay-server.env; set +a` 把它读进来 —— 那等于交给命令行去解释，
-> 值里只要有 `&` `|` `;` `#` 或空格，不加引号就会被当成命令语法。
-> 最容易踩的是 `&`：MySQL 的地址常带它（`?useSSL=false&serverTimezone=UTC`），不加引号会被
-> 当成「把前半句丢到后台跑」，实测结果是 `DB_URL` 这个变量压根没被设上、脚本读到的是空的，
-> 然后验证脚本提示「`DB_URL` 格式不对」—— 地址本身其实是好的，人照着提示去改地址只会越改越糊涂。
-> **口令用单引号**（里面的 `$` `` ` `` `\` 按字面走），**其余的值用双引号**。
-> 完整模板和各项说明见 `deploy/fastpay-server.env.example`。
 
 权限必须是 `640 root:fastpay`：
 
@@ -378,14 +334,8 @@ ssh root@150.158.99.251 'bash -s v1.6.0 MTM-210 prod' < deploy/verify-release.sh
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-admin/
 curl -s -o /dev/null -w '%{http_code}\n' https://pay.copliot.cloud/fastpay-merchant/
 
-# 6. 到这儿机器就不用再动了 —— 立刻放锁，别人还等着
-#    ⚠️ 就在这儿放，别拖到「登进后台点一遍」「截图」「写完验收报告」之后。
-#       那些事不需要占着机器；万一点出问题要回退，重新占一次锁就行（一条命令的事）。
-#       详见第零节「什么时候放锁」。
+# 6. 验完了，把锁放开，别人还等着
 ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
-
-# 7. 放完锁之后再慢慢做：登进后台按 docs/RELEASE_VERIFY.md 第二步点一遍、截图、写验收报告。
-#    这几件事都不用占着机器。
 ```
 
 > 💡 **忘了跑 `v1.2.0` 那个 `V1_1` 会怎样？**
@@ -411,23 +361,13 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 | `v1.5.0` | **无** | 这一版是 CI 流程、文档和 `.gitignore` 改动，不动表结构（可部署产物与 `v1.4.0` 完全一致，当时未重新部署） |
 | `v1.5.1` | `V1_4__pay_amount_uniqueness_pg.sql` | 两人同价撞单认错人（MTM-170）：新建 `fp_pending_pay_amount`、`fp_unmatched_notify` 两张表，补齐老订单的 `pay_amount`。🔴 **这个脚本会改动已有订单数据**，跑之前务必先做完整库备份 |
 | `v1.6.0` | `V1_3__order_notify_result_pg.sql` | 订单回调结果落库（MTM-157）：`fp_pay_order` 新增 `notify_result`、`notify_error` 两列 |
-| `v1.7.0` | `V1_5__widen_url_columns_pg.sql` | 订单/商户 URL 列 255→2000 加宽（MTM-209）。生产上这四个字段**已经是 2000 了**（2026-08-19 MTM-151 那晚用应急脚本 `widen-url-cols.sql` 手工加宽过），所以在生产上跑它是空操作，只是把手工那一步固化进正式脚本。但**只要有非生产环境（老 dev/test 库、灾备快照）曾经从旧 init 建起来又没跟着手工加宽，`V1_5` 就必须跑**，否则一走 sub2api 那类带长 URL 的支付流程就会报 `value too long for type character varying(255)` |
-| **下一版（还没打 tag）** | `V1_6__login_attempt_pg.sql` | 新增 `fp_login_attempt` 表，供后端登录限次记录「哪个账号 / 哪个 IP 连续输错了几次、锁到什么时候」（MTM-162）；漏跑这张表，新版后端一登录就直接报表不存在 |
+| **下一版（还没打 tag）** | `V1_5__widen_url_columns_pg.sql`、`V1_6__login_attempt_pg.sql` | 两件事：① 订单/商户 URL 列 255→2000 加宽（MTM-209，同上）。② 新增 `fp_login_attempt` 表，供后端登录限次记录「哪个账号 / 哪个 IP 连续输错了几次、锁到什么时候」（MTM-162）；漏跑这张表，新版后端一登录就直接报表不存在 |
 
-> ⚠️ **线上现在是「前端 `v1.7.0` + 后端 `v1.6.0`」的半版状态，别当成整版 `v1.7.0`。**
-> 2026-08-24 上线 MTM-202 时只发了两个前端（`fastpay-admin` / `fastpay-merchant`，从 tag `v1.7.0`
-> 也就是提交 `e5e3387` 构建），**后端 jar 和数据库一个字都没动**。所以：
->
-> - `/opt/fastpay/DEPLOYED_VERSION` 第一行写的是 `v1.7.0-frontend-only`，**不是** `v1.7.0` —— 这是故意的，
->   跑验证脚本时版本号也要照着传这一串。文件里第 2 行起写清了前端/后端/数据库各自停在哪一版
-> - `v1.7.0` 里那批后端改动（MTM-187 时区、MTM-177 CORS 白名单、MTM-209 的 `V1_5`、MTM-212 的 `/mapi.php`）
->   **还没上线**，要等下一个发布窗口
-> - 等后端也发上去之后，把 `DEPLOYED_VERSION` 第一行改回 `v1.7.0`，并把这一段改成正常表述
->
-> ✅ **数据库那边：`V1_1`~`V1_4` 都已经跑过了。**（2026-08-20 实测核对：库里 `fp_pending_pay_amount`、
+> ✅ **线上现在跑的就是 `v1.6.0`，`V1_3` 和 `V1_4` 都已经跑过了。**（2026-08-20 实测核对：
+> 服务器 `/opt/fastpay/DEPLOYED_VERSION` 是 `v1.6.0`；库里 `fp_pending_pay_amount`、
 > `fp_unmatched_notify` 两张表在，`fp_pay_order` 的 `notify_result`、`notify_error`
-> 两列也在。`V1_5` 那四个 URL 列查出来也已经是 `2000`，见 MTM-210；`V1_5` 脚本本身还没在生产上跑过，
-> 但对已经是 2000 的列跑它是空操作。）
+> 两列也在；程序 jar 里带的迁移脚本清单跟 `v1.6.0` 一字不差。
+> `V1_5` 那四个 URL 列查出来也已经是 `2000`。见 MTM-210）
 >
 > ⚠️ 这张表在 2026-08-20 之前写着「线上现在停在 `V1_2`」，**那是错的** —— 写的时候
 > `v1.5.1` / `v1.6.0` 还没发，后来发了却没人回来改这张表。**别再照着记忆写线上状态，
@@ -449,6 +389,7 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 - **表里写「无」的版本**：第三节 0 步骤里「传本次要跑的迁移脚本」「跑迁移」那两段跳过；**0 步骤开头那段备份（备份库 + 备份 jar + 备份前端）照做**，做完直接跳到第 1 步传 jar。
 - **本地或老装机用 MySQL 的**：把文件名里的 `_pg` 换成 `_mysql`，两个文件内容等价，只是数据库方言不同。
 - **跨版本升级**（比如线上还停在 `v1.2.0`，这次直接发 `v1.4.0`）：把中间每一版「新增」那一列的脚本**按版本从小到大依次跑一遍**。所有脚本重复跑都不会出问题（用了 `IF NOT EXISTS`），已经跑过的再跑一次不会中断部署。
+  - ⚠️ **「重复跑都不会出问题」这条只对 PostgreSQL 成立。** `ADD COLUMN IF NOT EXISTS` 是 MariaDB 的写法，**原厂 MySQL 不支持**，照跑会报语法错 `ERROR 1064`。六个 `_mysql` 脚本里只有 `V1_1` 和 `V1_3` 用到它 —— **在原厂 MySQL 上执行这两个时，把里面的 `IF NOT EXISTS` 去掉再跑**，重复执行会报「列已存在」，属正常。（`V1_4` 和 `V1_6` 用的是 `CREATE TABLE IF NOT EXISTS`，原厂 MySQL 支持；`V1_2` / `V1_5` 是纯 `MODIFY COLUMN`：这四个都不受影响。）细节见下面 `V1_3` 那一段的最后一条。生产用的是 PostgreSQL，走不到这里。
   - `V1_2` / `V1_3` / `V1_5` / `V1_6` 只改表结构（放宽字段宽度、加列、加表），**不动任何已有数据**；`V1_1` 只多一句把新加的 `token_version` 列的空值补成 0（`UPDATE ... WHERE token_version IS NULL`，重复跑也没事）。
   - 🔴 **`V1_4` 是例外，它会改动已有的订单数据**（补 `pay_amount`、把重复的老未支付订单关掉）。**只要这次要跑 `V1_4`，0 步骤那段整库备份就必须真的做完，不能因为「前面几版都不动数据」而跳过。** 细节见下面 `V1_4` 那一段。
 - 跑法就是第三节 0 步骤里「传本次要跑的迁移脚本」「跑迁移」那两段命令，把 `scp` 和 `psql` 里的文件名换成本次要跑的即可，其余照抄。
@@ -541,6 +482,8 @@ ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 
 **迁移脚本的执行顺序是 `V1_1` → `V1_2` → `V1_3` → `V1_4` → `V1_5` → `V1_6`。** 库落后好几版时按顺序补跑。六个脚本重复跑都不会出事（`V1_4` 里的两条 `UPDATE` 都带 `IS NULL` / `NOT IN (MIN(id))` 条件，第二遍跑就匹配不到任何行了；`INSERT` 也有 `ON CONFLICT DO NOTHING` 兜底；`V1_5` 是纯列宽变更，对已经是 2000 的列再跑是空操作；`V1_6` 用 `CREATE TABLE IF NOT EXISTS` 兜底）。
 
+> ⚠️ **上面那句「五个脚本重复跑都不会出事」只对 PostgreSQL 成立。** 在**原厂 MySQL** 上跑 `V1_1` / `V1_3` 的 `_mysql` 脚本，第一次就会直接报语法错 `ERROR 1064` —— `ADD COLUMN IF NOT EXISTS` 是 MariaDB 的写法，原厂 MySQL 不支持。**执行时把这两个脚本里的 `IF NOT EXISTS` 去掉再跑**，重复执行会报「列已存在」，属正常。（`V1_4` 的 `CREATE TABLE IF NOT EXISTS` 原厂 MySQL 是支持的，`V1_2` / `V1_5` 是纯 `MODIFY COLUMN`：这三个不受影响。）完整说明见上面 `V1_3` 那一段的最后一条。
+>
 > 📌 **别把「重复跑安全」当成「不动数据」。** `V1_4` 两样都占：它**第一次跑就是会改订单数据**，但重复跑不会再改第二次。备份该做还得做。
 
 > 📌 **编号不会重复，一个编号只对应一件事。** 早先 `V1_4__pay_amount_uniqueness_*.sql` 曾被误编成 `V1_2`，和 `V1_2__password_hash_bcrypt_*.sql` 撞了号 —— 手工敲命令的人会分不清该跑哪一个，用 `V1_2*` 这种通配符还会两个一起跑掉。现已改名修正。**以后加新脚本前，先看一眼 `db/migration/` 目录里已经用到哪个编号了，往后顺延。**
@@ -640,21 +583,18 @@ ssh root@150.158.99.251 '
 前端回退：把上一个版本的 `dist` 重新解压覆盖即可。
 
 回退完照样跑一遍验证脚本，版本号写你**退回到的**那一版 —— 确认真的退干净了。
-**脚本一跑完就放锁**：后面登进去点一遍、写事故说明、跟人交代情况，都不用再占着机器
-（第零节「什么时候放锁」）。出事那会儿别人往往更急着要这台机器，别攥在手里。
+**验完再放锁**，别验之前就放：
 
 ```bash
 ssh root@150.158.99.251 'bash -s <退回到的版本> MTM-210 prod' < deploy/verify-release.sh
 
-# 脚本绿了，机器不用再动了 —— 就在这儿放锁
 ssh root@150.158.99.251 '/root/fastpay-ops/prod-lock.sh release MTM-210'
 ```
 
 > 📌 **每次发版都要在服务器上留一份「这一版怎么退」的文档**，放 `/root/fastpay-ops/ROLLBACK-<版本号>.md`，
 > 写清楚：退回哪一版、备份文件在哪、数据库要不要跟着退、什么情况下就该退。
 > **发新版本时，上一版那份要标成「已过期」**，别让出事的人抓起一份过期的回退文档照着做。
-> 当前有效的那份是 `/root/fastpay-ops/ROLLBACK-v1.7.0-frontend-only.md`（2026-08-24 只发了前端那次，MTM-202）。
-> `ROLLBACK-v1.6.0.md` 和 `ROLLBACK-v1.5.1.md` 都已在文件开头标成「已过期」。
+> 当前有效的那份是 `/root/fastpay-ops/ROLLBACK-v1.6.0.md`（线上现在跑的就是 `v1.6.0`）。
 
 > ⚠️ **回退时数据库要不要一起退回去？不用，也不要退。**
 > 迁移脚本（比如 `v1.2.0` 带的 `V1_1__admin_account_management_pg.sql`）加的列，**旧版本 jar 完全不受影响**，留着就行。
@@ -744,17 +684,26 @@ nginx: [emerg] unknown "connection_upgrade" variable
 2. **`fastpay-merchant` 依赖 `less`。**
    支付页和支付结果页用了 `lang="less"` 的样式，`package.json` 里必须保留 `less` 这个 devDependency，否则 `npm run build` 直接失败。
 
-3. **首次部署时，管理员账号密码从哪来。**（`v1.2.0` 起，公开仓库里不再有默认的 `admin/123456`）
+3. **首次部署时，管理员账号密码从哪来。**（`v1.2.0` 起公开仓库里不再有默认的 `admin/123456`；`MTM-246` 起密码不再进日志）
    - 生产 yml 里只配了 `FASTPAY_ADMIN_INITIAL_USERNAME`（默认 `admin`），**故意不设 `FASTPAY_ADMIN_INITIAL_PASSWORD`**。
-   - 首次启动、库里没有任何管理员时，`InitConfig` 会随机生成一个 16 位密码，明文只写到 warn 日志里一次，形如：
+   - 首次启动、库里没有任何管理员时，`InitConfig` 会随机生成一个 16 位密码，**写进后端进程工作目录下的一份受限文件**（权限 `rw-------`，只有服务账号能读）：
      ```
-     WARN c.fastpay.service.impl.AdminServiceImpl - ==========================...
-     WARN c.fastpay.service.impl.AdminServiceImpl - 首次启动，已自动创建管理员账号：
-     WARN c.fastpay.service.impl.AdminServiceImpl -   账号：admin
-     WARN c.fastpay.service.impl.AdminServiceImpl -   初始密码：xxxxxxxxxxxxxxxx
+     /opt/fastpay/fastpay-initial-admin-password.txt
      ```
-     运维在 `journalctl -u fastpay-server | grep '初始密码'` 里拿到之后，**立刻登进后台改成自己的密码**，之后就再也拿不到了。
-   - 如果需求方偏要指定一个初始密码（例如迁移场景），在 `/etc/fastpay/fastpay-server.env` 里加一行 `FASTPAY_ADMIN_INITIAL_PASSWORD=<你想要的密码>`，然后首次启动。用完这一次记得**立刻删掉这一行**（不然下次重装库时又会被人在 env 文件里看到）。
+     日志里只会 warn 出该文件的绝对路径，**不会再出现密码明文**（`MTM-246` 修复项：线上日志文件默认全局可读，把密码写进日志等于把首任管理员账号送人）。
+   - 拿密码：SSH 到服务器后，用服务账号或 root 读一次即可，例如：
+     ```bash
+     sudo cat /opt/fastpay/fastpay-initial-admin-password.txt
+     # 或
+     sudo -u fastpay cat /opt/fastpay/fastpay-initial-admin-password.txt
+     ```
+     文件里同时有 `username=` 和 `password=` 两行，直接拿去登录后台。
+   - **登进后台第一件事：改成自己的密码；改完手动删掉那份文件**，防止有人日后翻磁盘再拿一次：
+     ```bash
+     sudo rm /opt/fastpay/fastpay-initial-admin-password.txt
+     ```
+   - 想换个位置放这份文件：在 `/etc/fastpay/fastpay-server.env` 里加一行 `FASTPAY_ADMIN_INITIAL_PASSWORD_FILE=/绝对/路径/xxx.txt`（默认相对 systemd `WorkingDirectory`，也就是 `/opt/fastpay/`）。
+   - 如果需求方偏要指定一个初始密码（例如迁移场景），在 `/etc/fastpay/fastpay-server.env` 里加一行 `FASTPAY_ADMIN_INITIAL_PASSWORD=<你想要的密码>`，然后首次启动。走这条路时**不会**再生成上面那份文件；用完这一次记得**立刻删掉这一行**（不然下次重装库时又会被人在 env 文件里看到）。
    - `application-prod.yml` 里的 JWT 密钥同样没有默认值，必须由环境变量注入；`application-dev.yml` 里那个开发用的默认密钥仍然是公开的，本地开发无所谓，但**不要拿 dev 配置上生产**。
    - **拿到之后放哪、上线验证该用哪个账号登后台**，见 [敏感信息怎么处理](SECRETS.md) 第四、五节。**别用需求方本人的账号去做验收。**
 

@@ -104,7 +104,66 @@
               </el-button>
             </div>
             <div class="card-body">
-              <el-table :data="qrcodeList" v-loading="qrcodeLoading" stripe>
+              <!-- 手机上换成卡片：右侧固定的「操作」列会盖住支付类型、累计收款、状态 -->
+              <div v-if="isMobile" v-loading="qrcodeLoading" class="record-list">
+                <div v-for="row in qrcodeList" :key="row.id" class="record-card qrcode-card">
+                  <div class="rc-head">
+                    <el-image
+                      v-if="row.qrcodeImage"
+                      :src="row.qrcodeImage"
+                      :preview-src-list="[row.qrcodeImage]"
+                      :preview-teleported="true"
+                      :initial-index="0"
+                      fit="cover"
+                      class="qrcode-card-thumb"
+                    >
+                      <template #error>
+                        <div class="image-error"><el-icon><Picture /></el-icon></div>
+                      </template>
+                    </el-image>
+                    <div class="qrcode-card-main">
+                      <div class="rc-title">{{ row.qrcodeName || '收款二维码' }}</div>
+                    </div>
+                    <span
+                      class="rc-badge status-tag"
+                      :class="row.status === 1 ? 'status-enabled' : 'status-disabled'"
+                    >{{ row.status === 1 ? '启用' : '禁用' }}</span>
+                  </div>
+
+                  <div class="rc-rows">
+                    <div class="rc-row">
+                      <span class="rc-label">支付类型</span>
+                      <span class="rc-value">
+                        <el-tag :type="row.payType === 'wxpay' ? 'success' : 'primary'" size="small">
+                          {{ row.payType === 'wxpay' ? '微信' : '支付宝' }}
+                        </el-tag>
+                      </span>
+                    </div>
+                    <div class="rc-row">
+                      <span class="rc-label">累计收款</span>
+                      <span class="rc-value"><span class="amount-text">¥{{ row.totalAmount || 0 }}</span></span>
+                    </div>
+                  </div>
+
+                  <div class="rc-actions">
+                    <el-button
+                      :type="row.status === 1 ? 'warning' : 'success'"
+                      link
+                      size="small"
+                      @click="handleQrcodeStatus(row, row.status === 1 ? 0 : 1)"
+                    >
+                      {{ row.status === 1 ? '禁用' : '启用' }}
+                    </el-button>
+                    <el-button type="danger" link size="small" @click="handleDeleteQrcode(row)">删除</el-button>
+                  </div>
+                </div>
+
+                <div v-if="!qrcodeLoading && qrcodeList.length === 0" class="empty-state">
+                  <div class="empty-text">这家店还没有二维码，点上面「添加二维码」创建</div>
+                </div>
+              </div>
+
+              <el-table v-else :data="qrcodeList" v-loading="qrcodeLoading" stripe>
                 <el-table-column label="二维码" width="80">
                   <template #default="{ row }">
                     <el-image
@@ -191,8 +250,18 @@
                 </el-button>
               </div>
 
-              <!-- 订单列表 -->
-              <el-table :data="orderList" v-loading="orderLoading" stripe style="margin-top: 16px;">
+              <!-- 订单列表：手机上和「订单管理」页共用同一套卡片，两处长得一模一样 -->
+              <div v-if="isMobile" class="shop-order-cards">
+                <OrderCardList
+                  :orders="orderList"
+                  :loading="orderLoading"
+                  :allow="['view', 'confirm']"
+                  @view="handleViewOrder"
+                  @confirm="handleConfirmOrder"
+                />
+              </div>
+
+              <el-table v-else :data="orderList" v-loading="orderLoading" stripe style="margin-top: 16px;">
                 <el-table-column prop="orderNo" label="平台订单号" width="170">
                   <template #default="{ row }">
                     <span class="order-no-text">{{ row.orderNo }}</span>
@@ -255,7 +324,8 @@
                   v-model:page-size="orderParams.size"
                   :page-sizes="[10, 20, 50]"
                   :total="orderTotal"
-                  layout="total, sizes, prev, pager, next"
+                  :pager-count="isMobile ? 5 : 7"
+                  :layout="isMobile ? 'total, prev, pager, next' : 'total, sizes, prev, pager, next'"
                   small
                   @size-change="loadOrders"
                   @current-change="loadOrders"
@@ -440,6 +510,11 @@ import {
 } from '@/api'
 import jsQR from 'jsqr'
 import QRCode from 'qrcode'
+import OrderCardList from '@/views/order/OrderCardList.vue'
+import { useIsMobile } from '@/composables/useIsMobile'
+
+// 手机上两张表都换成卡片，电脑上 isMobile 恒为 false，还是原来那两张表
+const { isMobile } = useIsMobile()
 
 // 店铺相关
 const loading = ref(false)
@@ -1431,6 +1506,30 @@ onMounted(() => {
      「搜索」「重置」各占一整行很难看，这里去掉它，让两个按钮并排 */
   .order-filter :deep(.el-button + .el-button) {
     margin-left: 0;
+  }
+
+  /* 二维码卡片：左边一张小图，右边名称，右上角状态 */
+  .qrcode-card :deep(.rc-head) {
+    align-items: center;
+    gap: 10px;
+  }
+
+  .qrcode-card-thumb {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .qrcode-card-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* 订单卡片跟上面的筛选条隔开一点 */
+  .shop-order-cards {
+    margin-top: 16px;
   }
 }
 </style>
